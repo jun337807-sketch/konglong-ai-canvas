@@ -54,6 +54,7 @@ import { CanvasMoreMenu } from './CanvasMoreMenu';
 import { AssetLibrary } from './AssetLibrary';
 import { TaskQueuePanel } from './TaskQueuePanel';
 import { PromptTemplatePanel } from './PromptTemplatePanel';
+import { groupAssetService } from '../services/groupAssetService';
 import { projectSettingsService } from '../services/projectSettingsService';
 import { canvasActionService } from '../services/canvasActionService';
 import { canvasHealthCheck } from '../services/canvasHealthCheck';
@@ -77,6 +78,34 @@ function inferEntityCategory(input?: string) {
   if (/(道具|物品|武器|剑|刀|枪|手机|书|杯子|车|船|门|prop|object|weapon|sword|phone|book|cup|car)/i.test(text)) return '道具';
   if (/(特效|火焰|烟雾|爆炸|光效|魔法|粒子|闪电|effect|vfx|magic|fire|smoke|explosion|lightning)/i.test(text)) return '特效';
   return '其他';
+}
+
+function inferSharedAssetCategory(input?: string, mediaType?: 'image' | 'video') {
+  if (mediaType === 'video') return '视频';
+  const entityCategory = inferEntityCategory(input);
+  if (entityCategory === '人物' || entityCategory === '场景') return entityCategory;
+  return '单帧画面';
+}
+
+function inferDownloadExtension(url: string, fallback: string) {
+  if (url.startsWith('data:image/')) return url.slice('data:image/'.length).split(';')[0].replace('jpeg', 'jpg') || fallback;
+  if (url.startsWith('data:video/')) return url.slice('data:video/'.length).split(';')[0] || fallback;
+  try {
+    const ext = new URL(url).pathname.split('.').pop()?.toLowerCase();
+    return ext && /^[a-z0-9]+$/.test(ext) ? ext : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function triggerMediaDownload(url: string, filename: string) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 // Custom Node Components
@@ -458,7 +487,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         position={Position.Top}
         className="flex items-center gap-1 p-1 bg-[#1a1b1e]/95 backdrop-blur-xl border border-zinc-700/80 rounded-xl shadow-2xl z-50 mb-2 relative"
       >
-        <button onClick={() => handleAction('panorama')} className="p-1.5 text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10 rounded-lg tooltip relative" title="全景"><Maximize size={15} /></button>
+        <button onClick={() => handleAction('preview')} className="p-1.5 text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10 rounded-lg tooltip relative" title="预览"><Eye size={15} /></button>
         <button onClick={() => setShowMultiAngle(!showMultiAngle)} className={`p-1.5 rounded-lg tooltip ${showMultiAngle ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10'}`} title="多角度"><Move3D size={15} /></button>
         <button onClick={() => handleAction('relight')} className="p-1.5 text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10 rounded-lg tooltip" title="打光"><Sun size={15} /></button>
         <div className="w-px h-4 bg-zinc-700 mx-0.5"></div>
@@ -497,7 +526,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         <button onClick={() => handleAction('annotate')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="标注"><Focus size={15} /></button>
         <button onClick={() => handleAction('rotate')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="旋转"><RotateCw size={15} /></button>
         <button onClick={() => handleAction('download')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="下载"><Download size={15} /></button>
-        <button onClick={() => handleAction('preview')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="预览"><Eye size={15} /></button>
+        <button onClick={() => handleAction('panorama')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="全景"><Maximize size={15} /></button>
       </NodeToolbar>
       
       <div className={`${nodeBg} border-[1.5px] ${selected ? selectedBorder : defaultBorder} rounded-2xl p-0 shadow-sm hover:shadow-[0_0_15px_rgba(0,188,212,0.15)] transition-shadow w-full h-full flex flex-col relative group`}>
@@ -1077,7 +1106,7 @@ const CameraMovementItem = ({ cam, prompt, setPrompt, updateNodeData, id, data, 
 };
 
 const VideoNode = ({ data, id, selected }: any) => {
-  const { updateNodeData, getNodes, getEdges, setNodes } = useReactFlow();
+  const { updateNodeData, getNode, getNodes, getEdges, setNodes } = useReactFlow();
   const [prompt, setPrompt] = useState(data.prompt || "");
   const [loading, setLoading] = useState(data.isGenerating || false);
   const [progressMsg, setProgressMsg] = useState(data.progressMsg || "");
@@ -1092,9 +1121,11 @@ const VideoNode = ({ data, id, selected }: any) => {
   const [showVideoModelMenu, setShowVideoModelMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showCameraMenu, setShowCameraMenu] = useState(false);
+  const [showFrameMenu, setShowFrameMenu] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(data.title || '视频节点');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
   React.useEffect(() => {
@@ -1112,6 +1143,7 @@ const VideoNode = ({ data, id, selected }: any) => {
       setShowSettings(false);
       setShowCameraMenu(false);
       setShowVideoModelMenu(false);
+      setShowFrameMenu(false);
     };
     window.addEventListener('click', handleClickOutside);
     return () => window.removeEventListener('click', handleClickOutside);
@@ -1185,6 +1217,67 @@ const VideoNode = ({ data, id, selected }: any) => {
       updateNodeData(id, { isGenerating: false, progressMsg: "" });
     }
   };
+
+  const captureVideoFrame = async (mode: 'current' | 'first' | 'last') => {
+    const video = videoRef.current;
+    if (!video || !data.videoUrl) {
+      alert('当前视频还没有可截取的画面');
+      return;
+    }
+
+    const seekTo = (time: number) => new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        video.removeEventListener('seeked', onSeeked);
+        video.removeEventListener('error', onError);
+      };
+      const onSeeked = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error('视频定位失败，无法截帧'));
+      };
+      video.addEventListener('seeked', onSeeked, { once: true });
+      video.addEventListener('error', onError, { once: true });
+      video.currentTime = time;
+    });
+
+    try {
+      const originalTime = video.currentTime || 0;
+      if (mode === 'first') await seekTo(0);
+      if (mode === 'last') await seekTo(Math.max(0, (video.duration || 0) - 0.08));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('浏览器无法创建截帧画布');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageUrl = canvas.toDataURL('image/png');
+
+      if (mode !== 'current') {
+        try { await seekTo(originalTime); } catch {}
+      }
+
+      const node = getNode(id);
+      const position = node
+        ? { x: node.position.x + Number(node.width || node.style?.width || 360) + 80, y: node.position.y + (mode === 'first' ? 0 : mode === 'current' ? 60 : 120) }
+        : undefined;
+      const label = mode === 'first' ? '首帧' : mode === 'last' ? '尾帧' : '当前帧';
+      if (data.onAddNode) {
+        data.onAddNode('imageNode', undefined, position, id, {
+          imageUrl,
+          title: `${data.title || '视频'}-${label}`,
+          initialWidth: 320,
+          initialHeight: Math.round(320 * (canvas.height / canvas.width))
+        });
+      }
+      setShowFrameMenu(false);
+    } catch (err: any) {
+      alert(`截帧失败：${err?.message || '当前视频地址可能不允许浏览器截帧'}`);
+    }
+  };
   return (
     <>
       <NodeResizer color="transparent" handleClassName={resizerHandleStyle} minWidth={240} minHeight={100} isVisible={selected} keepAspectRatio={!!data.videoUrl} />
@@ -1237,7 +1330,25 @@ const VideoNode = ({ data, id, selected }: any) => {
               <span className="text-xs text-[#00bcd4] font-medium animate-pulse">{progressMsg || "生成中..."}</span>
             </div>
           ) : data.videoUrl ? (
-            <video src={data.videoUrl || undefined} controls className="w-full h-full object-contain block bg-black nodrag" autoPlay loop />
+            <>
+              <video ref={videoRef} src={data.videoUrl || undefined} controls crossOrigin="anonymous" className="w-full h-full object-contain block bg-black nodrag" autoPlay loop />
+              <div className="absolute top-3 right-3 z-20">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowFrameMenu(!showFrameMenu); }}
+                  className="p-2 bg-black/60 hover:bg-[#00bcd4]/20 text-white rounded-lg border border-white/10 hover:border-[#00bcd4]/40 backdrop-blur-md transition-colors"
+                  title="截取视频帧"
+                >
+                  <Scissors size={15} />
+                </button>
+                {showFrameMenu && (
+                  <div className="absolute top-full right-0 mt-2 w-40 rounded-xl border border-zinc-700/80 bg-[#1E1E1E]/95 shadow-2xl p-1.5 flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
+                    <button onClick={() => captureVideoFrame('current')} className="text-left px-3 py-2 rounded-lg text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white transition-colors">截取当前帧</button>
+                    <button onClick={() => captureVideoFrame('first')} className="text-left px-3 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors">截取首帧</button>
+                    <button onClick={() => captureVideoFrame('last')} className="text-left px-3 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors">截取尾帧</button>
+                  </div>
+                )}
+              </div>
+            </>
           ) : (
              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
                  <Film size={48} className="opacity-40 text-zinc-600" />
@@ -2416,44 +2527,162 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     }
 
     if (action === 'annotate') {
-      showToast('进入标注模式...');
+      showToast('标注工具下一步会接入画笔、文字和马赛克；当前先保留入口，不影响图片生成链路。');
       return;
     }
 
-    // For generative actions: panorama, multi-angle, relight, 9grid-*, hd-*, split-*
-    // We simulate creating a new version or node.
-    updateNodeData(id, 'isGenerating', true);
-    
-    setTimeout(() => {
-      updateNodeData(id, 'isGenerating', false);
-      const newNodeId = `image-${Date.now()}`;
-      
-      let title = '';
-      if (action.startsWith('9grid')) title = '九宫格结果';
-      else if (action.startsWith('hd')) title = '高清处理结果';
-      else if (action.startsWith('split')) title = '切分结果';
-      else if (action === 'panorama') title = '全景图';
-      else if (action === 'multi-angle-gen') title = '多角度生成';
-      else if (action === 'relight') title = '打光衍生';
+    const sourceImage = String(node.data.imageUrl || '');
+    if (!sourceImage) {
+      showToast('请先上传或生成一张图片');
+      return;
+    }
 
+    const addDerivedImageNode = (imageUrl: string, title: string, index = 0) => {
+      const newNodeId = `image-${Date.now()}-${index}`;
+      const xOffset = 360 + (index % 4) * 220;
+      const yOffset = Math.floor(index / 4) * 260;
       const newNode = {
         id: newNodeId,
         type: 'imageNode',
-        position: { x: node.position.x + 350, y: node.position.y },
+        position: { x: node.position.x + xOffset, y: node.position.y + yOffset },
         style: { width: 320, height: 320 },
-        data: { 
-          imageUrl: node.data.imageUrl, 
+        data: {
+          imageUrl,
           title,
+          prompt: node.data.prompt || '',
           onAction: handleImageAction,
           onUpload: handleNodeFileUpload,
-          onGenerate: handleOpenGenerate
+          onGenerate: handleOpenGenerate,
+          onChange: handleImageChange,
+          onAddNode: addNode,
+          onOpenAssets: openAssets
         },
       };
       setNodes(nds => [...nds, newNode]);
       setEdges(eds => [...eds, { id: `e-${id}-${newNodeId}`, source: id, target: newNodeId, animated: true, style: { stroke: '#00bcd4' } }]);
-      showToast(`${title}生成完毕`);
-    }, 1500);
-  }, [getNodes, setNodes, setEdges, showToast]);
+    };
+
+    const splitGrid = async (gridSize: 2 | 3 | 4) => {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = sourceImage;
+      });
+      const cellWidth = Math.floor(image.naturalWidth / gridSize);
+      const cellHeight = Math.floor(image.naturalHeight / gridSize);
+      Array.from({ length: gridSize * gridSize }).forEach((_, index) => {
+        const col = index % gridSize;
+        const row = Math.floor(index / gridSize);
+        const canvas = document.createElement('canvas');
+        canvas.width = cellWidth;
+        canvas.height = cellHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(image, col * cellWidth, row * cellHeight, cellWidth, cellHeight, 0, 0, cellWidth, cellHeight);
+        addDerivedImageNode(canvas.toDataURL('image/png'), `${gridSize * gridSize}宫格拆分 ${index + 1}`, index);
+      });
+      showToast(`${gridSize * gridSize}宫格拆分完成`);
+    };
+
+    if (action === 'split-4' || action === 'split-9' || action === 'split-16') {
+      const gridSize = action === 'split-4' ? 2 : action === 'split-9' ? 3 : 4;
+      splitGrid(gridSize).catch(() => showToast('宫格拆分失败：图片地址不允许浏览器读取，请先下载后重新上传到画布再拆分'));
+      return;
+    }
+
+    const userPrompt = String(node.data.prompt || '').trim();
+    const cameraText = payload
+      ? `目标机位：水平环绕 ${payload.horizontal ?? 0}°，垂直俯仰 ${payload.vertical ?? 0}°，景别 ${['特写', '近景', '中景', '全景', '远景'][payload.zoom ?? 2] || '中景'}。`
+      : '';
+
+    const promptMap: Record<string, { title: string; prompt: string; ratio?: string; resolution?: string }> = {
+      'multi-angle-gen': {
+        title: '多角度生成',
+        prompt: `以参考图为唯一视觉基准，生成同一主体/同一场景的新角度画面。${cameraText}保持身份、服装、场景结构、材质、光影和画风一致，不添加无关元素。${payload?.usePrompt && userPrompt ? `补充要求：${userPrompt}` : ''}`,
+        ratio: '16:9',
+        resolution: '4K'
+      },
+      relight: {
+        title: '打光衍生',
+        prompt: `以参考图为基础，仅重新设计电影级光影与氛围，主体、构图、角色身份、服装和场景结构保持一致。${userPrompt ? `补充要求：${userPrompt}` : ''}`,
+        resolution: '4K'
+      },
+      '9grid-multi': {
+        title: '多视图网格',
+        prompt: `基于参考图生成一张结构清晰的多视图网格资产图。内容包含：东向、西向、南向、北向、鸟瞰、低机位、入口视角、关键空间锚点、全景总览。所有格子必须是同一场景的连续空间推演，建筑/家具/地形/光影/画风严格一致，不能漂移，适合用于场景资产完善。${userPrompt ? `补充要求：${userPrompt}` : ''}`,
+        ratio: '16:9',
+        resolution: '4K'
+      },
+      '9grid-story': {
+        title: '九宫格分镜推演',
+        prompt: `以参考图为开场视觉，生成一张九宫格故事分镜图。九个画面按照从左到右、从上到下推进，包含建立镜头、人物/主体动作、冲突、转折、细节特写、结果镜头。保持角色身份、场景、色彩、光影和画风一致，每格构图有明确镜头语言。${userPrompt ? `故事方向：${userPrompt}` : ''}`,
+        ratio: '1:1',
+        resolution: '4K'
+      },
+      '9grid-character': {
+        title: '角色三视图',
+        prompt: `多视图角色设定图，结构化排版，严格一致性控制。根据参考图自动判断画风：如果原图写实，则生成写实摄影/真实物理世界人物；如果原图动漫或插画，则保持原图动漫/插画画风。核心布局：左侧3个大型全身视图，正面 + 背面 + 侧面，A姿势，双臂自然下垂，身体直立，人物比例严谨，解剖结构准确。右侧4格肖像矩阵，2x2排列，包含正面肖像、左侧肖像、右侧肖像、角色右眼和真实皮肤/材质微距细节。整体横向排版，左侧全身三视图，右侧肖像矩阵，布局清晰，间距均匀。所有视图人物尺度统一，对齐严格，比例完全一致。全身视图为正交视角，无透视畸变；肖像视图为标准人像机位。统一中性纯色背景，影棚级柔光，光照方向统一。所有视图必须为同一角色，面部特征、骨骼结构、体型、服装完全一致，不允许漂移。画面边缘带有清晰排版文字「人物 UID：${id}_01」。不允许姿势变化、服装变化、光影变化、背景变化、风格偏移。${userPrompt ? `补充要求：${userPrompt}` : ''}`,
+        ratio: '16:9',
+        resolution: '4K'
+      },
+      'hd-enhance': {
+        title: '高清增强',
+        prompt: '对参考图进行高清增强和细节修复，保持原始构图、主体、画风、色彩关系完全不变；提升分辨率、边缘清晰度、材质纹理、面部/场景细节，去除压缩噪点和模糊。',
+        resolution: '4K'
+      },
+      'hd-expand': {
+        title: '扩图结果',
+        prompt: `基于参考图进行自然扩图/outpainting，向画面外延展环境和空间信息。主体比例、画风、光影和透视保持一致，新增区域必须像原图自然延伸，不改变原主体。${userPrompt ? `扩展方向：${userPrompt}` : ''}`,
+        ratio: '16:9',
+        resolution: '4K'
+      },
+      'hd-redraw': {
+        title: '单帧重绘',
+        prompt: `以参考图为基础进行单帧重绘，保持主体身份、服装、构图、场景和画风一致，同时修正瑕疵、提升质感和完成度。${userPrompt ? `重绘要求：${userPrompt}` : ''}`,
+        resolution: '4K'
+      },
+      'hd-erase': {
+        title: '擦除修复',
+        prompt: `以参考图为基础进行智能擦除修复：移除画面中明显杂物、瑕疵、污点、水印感干扰或不自然元素，并用周围背景自然补全。不要改变主体身份、构图和画风。${userPrompt ? `优先处理：${userPrompt}` : ''}`,
+        resolution: '4K'
+      }
+    };
+
+    const config = promptMap[action];
+    if (!config) return;
+
+    const runDerivative = async () => {
+      try {
+        updateNodeData(id, 'isGenerating', true);
+        updateNodeData(id, 'progressMsg', `正在生成${config.title}...`);
+        const imageUrl = await runImageGeneration(
+          config.prompt,
+          undefined,
+          undefined,
+          config.ratio || '16:9',
+          config.resolution || '4K',
+          {
+            workspaceProjectId: projectId,
+            createdBy: currentUser || 'system',
+            uiModel: String(node.data.uiModel || 'KONGLONG Image'),
+            referenceImages: [sourceImage]
+          }
+        );
+        addDerivedImageNode(String(imageUrl), config.title);
+        showToast(`${config.title}生成完成`);
+      } catch (err: any) {
+        console.error(err);
+        showToast(`${config.title}生成失败：${err?.message || '未知错误'}`);
+      } finally {
+        updateNodeData(id, 'isGenerating', false);
+        updateNodeData(id, 'progressMsg', '');
+      }
+    };
+
+    runDerivative();
+  }, [getNodes, setNodes, setEdges, showToast, projectId, currentUser]);
 
   const updateNodeData = useCallback((id: string, key: string, value: any) => {
     saveHistory('update_node', id);
@@ -2577,6 +2806,45 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           showToast('该节点没有图片');
         }
         break;
+      case 'download-media': {
+        const mediaUrl = node.data?.imageUrl || node.data?.videoUrl;
+        if (!mediaUrl) {
+          showToast('该节点没有可下载的媒体');
+          break;
+        }
+        const isVideo = !!node.data?.videoUrl;
+        const ext = inferDownloadExtension(mediaUrl, isVideo ? 'mp4' : 'png');
+        const safeTitle = String(node.data?.title || (isVideo ? 'video-node' : 'image-node')).replace(/[\\/:*?"<>|]/g, '-');
+        triggerMediaDownload(mediaUrl, `${safeTitle}.${ext}`);
+        showToast(isVideo ? '开始下载视频' : '开始下载图片');
+        break;
+      }
+      case 'add-shared-asset': {
+        const mediaUrl = node.data?.imageUrl || node.data?.videoUrl;
+        if (!mediaUrl) {
+          showToast('该节点没有可共享的媒体');
+          break;
+        }
+        const isVideo = !!node.data?.videoUrl;
+        const title = String(node.data?.title || (isVideo ? '视频素材' : '图片素材'));
+        const category = inferSharedAssetCategory(title, isVideo ? 'video' : 'image');
+        groupAssetService.createAsset({
+          group_id: groupId,
+          project_id: projectId,
+          url: mediaUrl,
+          thumbnail_url: node.data?.imageUrl || undefined,
+          name: title,
+          type: category,
+          tags: [category],
+          created_by: currentUser || 'system'
+        }).then(() => {
+          showToast(`已添加到组内共享资产库：${category}`);
+        }).catch((err) => {
+          console.error(err);
+          showToast('添加共享资产失败');
+        });
+        break;
+      }
       case 'duplicate': {
         const newNodeId = `${node.type}-${Date.now()}`;
         const newNode = {
@@ -4281,6 +4549,16 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
             <button className="flex items-center justify-between px-3 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full" onClick={() => handleContextMenuAction('copy-image')}>
               <span>复制图片</span>
             </button>
+            {(menu.nodeType === 'imageNode' || menu.nodeType === 'videoNode') && (
+              <button className="flex items-center justify-between px-3 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full" onClick={() => handleContextMenuAction('download-media')}>
+                <span>{menu.nodeType === 'videoNode' ? '下载视频' : '下载图片'}</span>
+              </button>
+            )}
+            {(menu.nodeType === 'imageNode' || menu.nodeType === 'videoNode') && (
+              <button className="flex items-center justify-between px-3 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full" onClick={() => handleContextMenuAction('add-shared-asset')}>
+                <span>添加到组内共享资产库</span>
+              </button>
+            )}
             <button className="flex items-center justify-between px-3 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full" onClick={() => handleContextMenuAction('duplicate')}>
               <div className="flex items-center gap-1.5">
                 <span>创建副本</span>
