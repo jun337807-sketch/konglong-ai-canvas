@@ -35,7 +35,7 @@ import {
   Play, Maximize, Download, Sun, SplitSquareHorizontal, 
   Move3D, Eye, Sparkles, Focus, RotateCw, BookMarked, 
   Copy, CopyPlus, ClipboardPaste, Trash2, BoxSelect, Settings, HelpCircle,
-  Plus, Share2, Shapes, Clock, Headphones, AlignLeft, Image as ImageIcon, Video, Scissors, AudioLines, FileText, Upload, Box, MapPin, Monitor, Camera, Maximize2, Minimize2, Languages, Settings2, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, User, RefreshCw, CheckCircle, Loader2, Briefcase, List
+  Plus, Share2, Shapes, Clock, Headphones, AlignLeft, Image as ImageIcon, Video, Scissors, AudioLines, FileText, Upload, Box, MapPin, Monitor, Camera, Maximize2, Minimize2, Languages, Settings2, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, User, RefreshCw, CheckCircle, Loader2, Briefcase, List, ListTodo
 } from 'lucide-react';
 import { useCanvasHistory } from '../hooks/useCanvasHistory';
 import { HistoryPanel } from './HistoryPanel';
@@ -66,7 +66,18 @@ const selectedBorder = "border-[rgba(255,255,255,0.15)] shadow-[0_0_20px_rgba(25
 const defaultBorder = "border-zinc-800/80";
 const nodeBg = "bg-[#111214]/90 backdrop-blur-md";
 const handleStyle = "!w-5 !h-5 !min-w-[20px] !min-h-[20px] !absolute !top-1/2 !-translate-y-1/2 !bg-transparent !border-transparent hover:!bg-[#00bcd4] hover:!border-[#00bcd4] hover:!scale-125 hover:shadow-[0_0_12px_rgba(0,188,212,0.8)] transition-all duration-200 cursor-crosshair z-50 rounded-full";
+const plusHandleStyle = "!relative !right-auto !top-auto !translate-y-0 !w-8 !h-8 !min-w-[32px] !min-h-[32px] !bg-[#2A2A2A] !border !border-zinc-600 !rounded-full !opacity-100 flex items-center justify-center text-zinc-300 hover:!bg-zinc-700 hover:!border-[#00bcd4] hover:text-white hover:!scale-110 hover:shadow-[0_0_16px_rgba(0,188,212,0.55)] transition-all duration-200 cursor-crosshair z-50";
 const resizerHandleStyle = "w-2 h-2 bg-white/50 rounded-sm border-none shadow-[0_0_4px_rgba(255,255,255,0.3)]";
+const entityCategories = ['人物', '场景', '道具', '特效', '其他'];
+
+function inferEntityCategory(input?: string) {
+  const text = (input || '').toLowerCase();
+  if (/(人物|角色|主角|配角|反派|演员|女孩|女生|女人|男性|男人|男孩|少年|少女|头像|肖像|人像|character|person|portrait|girl|boy|woman|man)/i.test(text)) return '人物';
+  if (/(场景|环境|房间|室内|室外|街道|城市|村庄|森林|山|海|湖|天空|建筑|办公室|客厅|卧室|scene|environment|room|street|city|forest|mountain|sea|building)/i.test(text)) return '场景';
+  if (/(道具|物品|武器|剑|刀|枪|手机|书|杯子|车|船|门|prop|object|weapon|sword|phone|book|cup|car)/i.test(text)) return '道具';
+  if (/(特效|火焰|烟雾|爆炸|光效|魔法|粒子|闪电|effect|vfx|magic|fire|smoke|explosion|lightning)/i.test(text)) return '特效';
+  return '其他';
+}
 
 // Custom Node Components
 const TextNode = ({ data, id, selected }: any) => {
@@ -512,14 +523,17 @@ const ImageNode = ({ data, id, selected }: any) => {
           </div>
         )}
         
-        {/* Right '+' Button / Handle */}
-        <div className="absolute top-1/2 -translate-y-1/2 -right-8 z-40 opacity-0 group-hover:opacity-100 transition-opacity">
-           <button 
+        {/* Right '+' Connection Handle: click opens quick add, drag creates edge */}
+        <div className="absolute top-1/2 -translate-y-1/2 -right-11 z-40 opacity-100 transition-opacity">
+           <Handle
+             type="source"
+             position={Position.Right}
+             className={plusHandleStyle}
              onClick={(e) => { e.stopPropagation(); setShowAddMenu(!showAddMenu); }}
-             className="w-6 h-6 rounded-full bg-[#2A2A2A] border border-zinc-600 flex items-center justify-center text-zinc-300 hover:text-white hover:bg-zinc-700 hover:scale-110 transition-all shadow-md"
+             title="单击添加节点，按住拖拽连接"
            >
              <Plus size={14} />
-           </button>
+           </Handle>
 
            {showAddMenu && (
              <div className="absolute top-0 left-full ml-2 bg-[#2A2A2A] border border-zinc-700/80 rounded-xl shadow-2xl p-2 w-48 flex flex-col gap-1 z-[100]" onClick={e => e.stopPropagation()}>
@@ -539,7 +553,6 @@ const ImageNode = ({ data, id, selected }: any) => {
              </div>
            )}
         </div>
-        <Handle type="source" position={Position.Right} className={handleStyle} />
 
         {data.imageUrl ? (
           <div className="flex-1 rounded-2xl overflow-hidden relative group/img bg-transparent m-1 flex flex-col justify-center">
@@ -555,18 +568,29 @@ const ImageNode = ({ data, id, selected }: any) => {
             
             {data.isGenerating && (
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-20">
-                <Sparkles className="text-[#00bcd4] animate-pulse mb-2" size={32} />
-                <span className="text-sm text-zinc-300 font-medium">处理中...</span>
+                <Sparkles className="text-[#00bcd4] animate-pulse mb-3" size={32} />
+                <span className="text-sm text-[#00e5ff] font-medium">
+                  {data.progressMsg || '正在生成图片中，请稍等...'}
+                </span>
               </div>
             )}
           </div>
         ) : (
           <div className="flex-1 rounded-2xl bg-[#2A2A2A]/50 border-2 border-transparent hover:border-zinc-700 transition-colors flex flex-col items-center justify-center relative m-1">
-             <div className="text-zinc-600 mb-6 mt-4">
-               <ImageIcon size={64} className="opacity-40 mx-auto" />
-             </div>
+             {data.isGenerating ? (
+               <div className="flex flex-col items-center justify-center px-6 text-center">
+                 <Sparkles className="text-[#00bcd4] animate-pulse mb-3" size={32} />
+                 <span className="text-sm text-[#00e5ff] font-medium">
+                   {data.progressMsg || '正在生成图片中，请稍等...'}
+                 </span>
+               </div>
+             ) : (
+               <div className="text-zinc-600 mb-6 mt-4">
+                 <ImageIcon size={64} className="opacity-40 mx-auto" />
+               </div>
+             )}
              
-             <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-200 z-[100] opacity-0 group-hover:opacity-100 ${selected ? '-top-[90px]' : '-top-12'}`}>
+             {!data.isGenerating && <div className={`absolute left-1/2 -translate-x-1/2 transition-all duration-200 z-[100] opacity-0 group-hover:opacity-100 ${selected ? '-top-[90px]' : '-top-12'}`}>
                 <label className="flex items-center gap-2 px-3 py-1.5 bg-[#2A2A2A] border border-zinc-700 hover:bg-zinc-700 text-zinc-300 rounded-lg cursor-pointer text-sm shadow-[0_0_20px_rgba(0,0,0,0.5)]">
                   <Upload size={14} /> 上传
                   <input type="file" accept="image/*" className="hidden" onClick={e => e.stopPropagation()} onChange={(e) => {
@@ -581,7 +605,7 @@ const ImageNode = ({ data, id, selected }: any) => {
                      }
                   }}/>
                 </label>
-             </div>
+             </div>}
              
              
           </div>
@@ -2192,8 +2216,18 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
   const [materialsCategory, setMaterialsCategory] = useState('全部');
   const [entitiesCategory, setEntitiesCategory] = useState('全部');
   const [myEntities, setMyEntities] = useState<any[]>([]);
+  const [entityCategoryMenuId, setEntityCategoryMenuId] = useState<string | null>(null);
   const [activeRightPanel, setActiveRightPanel] = useState<{ type: MediaCapability, nodeId: string, initialValues?: Record<string, any> } | null>(null);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
+
+  React.useEffect(() => {
+    const closeFloatingMenus = () => {
+      setShowCanvasMenu(false);
+      setEntityCategoryMenuId(null);
+    };
+    window.addEventListener('click', closeFloatingMenus);
+    return () => window.removeEventListener('click', closeFloatingMenus);
+  }, []);
 
   const showToast = useCallback((message: string) => {
     setToast({ message, visible: true });
@@ -2258,26 +2292,66 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     const currentNodes = getNodes();
     const currentEdges = getEdges();
     const targetNode = currentNodes.find(n => n.id === nodeId);
+    const prompt = String(targetNode?.data?.prompt || '').trim();
     const upstreamImageUrls = currentEdges
       .filter(edge => edge.target === nodeId)
       .map(edge => currentNodes.find(n => n.id === edge.source))
       .filter(sourceNode => sourceNode?.type === 'imageNode' && sourceNode.data?.imageUrl)
       .map(sourceNode => sourceNode?.data?.imageUrl as string);
 
-    setActiveRightPanel({
-      type: 'image_to_image',
-      nodeId,
-      initialValues: {
-        prompt: targetNode?.data?.prompt || '',
-        reference_images: upstreamImageUrls,
-        aspect_ratio: options?.aspectRatio,
-        size: options?.resolution,
-        image_count: options?.imageCount,
-        style: options?.stylePreset,
-        ui_model: options?.uiModel
-      }
-    });
-  }, [getNodes, getEdges]);
+    if (!targetNode) return;
+    if (!prompt) {
+      showToast('请输入图片提示词');
+      return;
+    }
+
+    const patchNodeData = (patch: Record<string, unknown>) => {
+      setNodes(nds => nds.map(node => (
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, ...patch } }
+          : node
+      )));
+    };
+
+    try {
+      patchNodeData({
+        isGenerating: true,
+        progress: 8,
+        progressMsg: upstreamImageUrls.length > 0 ? '正在参考上游图片生成...' : '正在生成图片...',
+        prompt
+      });
+
+      const imageUrl = await runImageGeneration(
+        prompt,
+        undefined,
+        undefined,
+        options?.aspectRatio || '16:9',
+        options?.resolution || '2K',
+        {
+          workspaceProjectId: projectId,
+          createdBy: currentUser || 'system',
+          uiModel: options?.uiModel,
+          referenceImages: upstreamImageUrls
+        }
+      );
+
+      patchNodeData({
+        imageUrl,
+        isGenerating: false,
+        progress: 100,
+        progressMsg: '',
+        aspectRatio: options?.aspectRatio,
+        resolution: options?.resolution,
+        imageCount: options?.imageCount,
+        stylePreset: options?.stylePreset,
+        uiModel: options?.uiModel
+      });
+      showToast(upstreamImageUrls.length > 0 ? '参考图生成完成' : '图片生成完成');
+    } catch (err: any) {
+      patchNodeData({ isGenerating: false, progress: 0, progressMsg: '' });
+      showToast(`图片生成失败：${err?.message || '未知错误'}`);
+    }
+  }, [getNodes, getEdges, setNodes, projectId, currentUser, showToast]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -3649,15 +3723,15 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         <button onClick={() => fitView({ duration: 800 })} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="居中对齐">
           <Eye size={16} />
         </button>
-        <button onClick={() => window.location.reload()} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="刷新画布">
-          <RotateCw size={16} />
+        <button onClick={() => setShowTaskQueue(true)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="查看任务队列">
+          <ListTodo size={16} />
         </button>
         <div className="relative">
-          <button onClick={() => setShowCanvasMenu(!showCanvasMenu)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="更多">
+          <button onClick={(e) => { e.stopPropagation(); setShowCanvasMenu(!showCanvasMenu); }} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="更多">
             <Settings size={16} />
           </button>
           {showCanvasMenu && (
-            <div className="absolute top-full mt-2 right-0">
+            <div className="absolute top-full mt-2 right-0" onClick={(e) => e.stopPropagation()}>
                <CanvasMoreMenu 
                   onAction={async (actionId) => {
                     if (actionId === 'health-check') {
@@ -3899,7 +3973,8 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                           onClick={(e) => {
                             e.stopPropagation();
                             if (!myEntities.some(e => e.id === node.id)) {
-                              setMyEntities([...myEntities, { id: node.id, imageUrl: node.data.imageUrl, title: node.data.title || `主体 ${myEntities.length + 1}` }]);
+                              const title = node.data.title || `主体 ${myEntities.length + 1}`;
+                              setMyEntities([...myEntities, { id: node.id, imageUrl: node.data.imageUrl, title, category: inferEntityCategory(title) }]);
                               showToast('已添加到我的主体库');
                             } else {
                               showToast('主体库已存在该素材');
@@ -3927,7 +4002,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
               <>
                 <div className="flex items-center justify-between px-5 pb-4 border-b border-zinc-800/50">
                   <div className="flex items-center gap-6 text-sm text-zinc-400 overflow-x-auto no-scrollbar">
-                    {['全部', '人物', '场景', '道具', '特效', '其他'].map(cat => (
+                    {['全部', ...entityCategories].map(cat => (
                       <button 
                         key={cat} 
                         onClick={() => setEntitiesCategory(cat)}
@@ -3949,7 +4024,8 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                            const reader = new FileReader();
                            reader.onload = (ev) => {
                               const imageUrl = ev.target?.result as string;
-                              setMyEntities([...myEntities, { id: `entity-${Date.now()}`, imageUrl, title: file.name.replace(/\.[^/.]+$/, "") || '未命名主体' }]);
+                              const title = file.name.replace(/\.[^/.]+$/, "") || '未命名主体';
+                              setMyEntities([...myEntities, { id: `entity-${Date.now()}`, imageUrl, title, category: inferEntityCategory(title) }]);
                               showToast('已创建新主体');
                            };
                            reader.readAsDataURL(file);
@@ -3962,7 +4038,9 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                 </div>
 
                 <div className="flex-1 p-5 overflow-y-auto grid grid-cols-3 gap-4 custom-scrollbar content-start">
-                  {myEntities.map((entity, i) => (
+                  {myEntities
+                    .filter(entity => entitiesCategory === '全部' || (entity.category || '其他') === entitiesCategory)
+                    .map((entity) => (
                     <div 
                       key={entity.id}
                       className="flex flex-col gap-2 group cursor-pointer"
@@ -3979,14 +4057,42 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                     >
                       <div className="aspect-square bg-zinc-800 rounded-xl overflow-hidden relative border-2 border-transparent group-hover:border-[#00bcd4] transition-colors shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
                         <img src={entity.imageUrl} className="w-full h-full object-cover" alt={entity.title} />
-                        <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 backdrop-blur-md rounded text-[9px] text-[#00bcd4] font-medium border border-[#00bcd4]/30">
-                          {entitiesCategory === '全部' ? '未分类' : entitiesCategory}
-                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEntityCategoryMenuId(entityCategoryMenuId === entity.id ? null : entity.id);
+                          }}
+                          className="absolute top-2 right-2 px-1.5 py-0.5 bg-black/70 hover:bg-[#00bcd4]/20 backdrop-blur-md rounded text-[9px] text-[#00bcd4] font-medium border border-[#00bcd4]/30 transition-colors"
+                          title="点击修改分类"
+                        >
+                          {entity.category || '未分类'}
+                        </button>
+                        {entityCategoryMenuId === entity.id && (
+                          <div
+                            className="absolute top-8 right-2 z-30 w-24 rounded-xl border border-zinc-700/80 bg-[#1E1E1E]/95 shadow-2xl p-1.5 flex flex-col gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {entityCategories.map(cat => (
+                              <button
+                                key={cat}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMyEntities(entities => entities.map(item => item.id === entity.id ? { ...item, category: cat } : item));
+                                  setEntityCategoryMenuId(null);
+                                  showToast(`已归类为${cat}`);
+                                }}
+                                className={`text-left px-2 py-1.5 rounded-lg text-xs transition-colors ${entity.category === cat ? 'bg-[#00bcd4]/20 text-[#00e5ff]' : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'}`}
+                              >
+                                {cat}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <span className="text-zinc-300 text-xs px-1 font-medium truncate">{entity.title}</span>
                     </div>
                   ))}
-                  {myEntities.length === 0 && (
+                  {myEntities.filter(entity => entitiesCategory === '全部' || (entity.category || '其他') === entitiesCategory).length === 0 && (
                      <div className="col-span-3 flex flex-col items-center justify-center text-center text-zinc-500 text-sm mt-10 gap-3">
                        <div className="w-12 h-12 rounded-2xl bg-zinc-800/50 flex items-center justify-center">
                          <User size={24} className="text-zinc-600" />
