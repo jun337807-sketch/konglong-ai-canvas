@@ -9,6 +9,32 @@ export interface DreaminaStatusResult {
 
 let lastLocalTaskId: string | null = null;
 
+export interface DreaminaVideoOptions {
+  imageUrls?: string[];
+  ratio?: string;
+  duration?: number;
+  resolution?: string;
+  generateAudio?: boolean;
+  model?: string;
+  metadata?: Record<string, unknown>;
+}
+
+function normalizeRatio(ratio?: string) {
+  if (!ratio || ratio === 'Auto') return '16:9';
+  return ratio;
+}
+
+function normalizeResolution(resolution?: string) {
+  const value = (resolution || '720p').toLowerCase();
+  return value === '480p' ? '480p' : '720p';
+}
+
+function normalizeDuration(duration?: number) {
+  const value = Number(duration || 10);
+  if (!Number.isFinite(value)) return 10;
+  return Math.max(4, Math.min(15, Math.round(value)));
+}
+
 function normalizeStatus(result: ProviderTaskResult): DreaminaStatusResult {
   if (result.status === 'succeeded') {
     return {
@@ -36,16 +62,25 @@ function normalizeStatus(result: ProviderTaskResult): DreaminaStatusResult {
   };
 }
 
-export async function submitDreaminaVideo(prompt: string, imageUrl: string | null = null) {
+export async function submitDreaminaVideo(
+  prompt: string,
+  imageUrl: string | null = null,
+  options: DreaminaVideoOptions = {}
+) {
+  const imageUrls = options.imageUrls ?? (imageUrl ? [imageUrl] : []);
   const { result, task } = await generationRepository.submitVideo({
     prompt,
-    imageUrls: imageUrl ? [imageUrl] : [],
-    ratio: '16:9',
-    duration: 8,
-    generateAudio: true,
+    imageUrls,
+    ratio: normalizeRatio(options.ratio),
+    duration: normalizeDuration(options.duration),
+    generateAudio: options.generateAudio ?? true,
     createdBy: localStorage.getItem('dino_currentUser') || 'system',
     metadata: {
-      source: 'dreaminaApi.compat'
+      source: 'dreaminaApi.compat',
+      resolution: normalizeResolution(options.resolution),
+      videoModel: options.model,
+      referenceCount: imageUrls.length,
+      ...options.metadata
     }
   });
 
@@ -85,9 +120,10 @@ export async function queryDreaminaStatus(taskId: string): Promise<DreaminaStatu
 export async function generateDreaminaVideoAndWait(
   prompt: string,
   imageUrl: string | null,
-  onProgress: (status: string) => void
+  onProgress: (status: string) => void,
+  options: DreaminaVideoOptions = {}
 ) {
-  const taskId = await submitDreaminaVideo(prompt, imageUrl);
+  const taskId = await submitDreaminaVideo(prompt, imageUrl, options);
   onProgress?.('submitted');
 
   while (true) {

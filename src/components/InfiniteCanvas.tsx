@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+﻿import React, { useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -922,7 +922,7 @@ const ImageNode = ({ data, id, selected }: any) => {
                
                <button 
                  className={`w-8 h-8 rounded-full ${data.isGenerating ? 'bg-[#00bcd4]/20' : 'bg-zinc-600 hover:bg-[#00bcd4]'} text-white flex items-center justify-center transition-all shadow-lg ml-1 relative`}
-                 onClick={(e) => { e.stopPropagation(); if(!data.isGenerating && data.onGenerate) data.onGenerate(id, { aspectRatio, resolution, imageCount, stylePreset }); }}
+                 onClick={(e) => { e.stopPropagation(); if(!data.isGenerating && data.onGenerate) data.onGenerate(id, { aspectRatio, resolution, imageCount, stylePreset, uiModel: model }); }}
                  disabled={data.isGenerating}
                >
                  {data.isGenerating ? (
@@ -1057,7 +1057,7 @@ const VideoNode = ({ data, id, selected }: any) => {
   const [prompt, setPrompt] = useState(data.prompt || "");
   const [loading, setLoading] = useState(data.isGenerating || false);
   const [progressMsg, setProgressMsg] = useState(data.progressMsg || "");
-  const [activeTab, setActiveTab] = useState('文生视频');
+  const [activeTab, setActiveTab] = useState(data.activeTab || '全能参考');
   const tabs = ['文生视频', '全能参考', '图生视频', '首尾帧', '图片参考'];
 
   const [aspectRatio, setAspectRatio] = useState(data.aspectRatio || '16:9');
@@ -1098,42 +1098,69 @@ const VideoNode = ({ data, id, selected }: any) => {
     if (!prompt.trim()) return alert("请输入提示词");
     
     setLoading(true);
-    setProgressMsg("正在连接即梦服务...");
-    updateNodeData(id, { isGenerating: true, progressMsg: "正在连接即梦服务..." });
+    setProgressMsg("正在连接视频生成服务...");
+    updateNodeData(id, { isGenerating: true, progressMsg: "正在连接视频生成服务...", activeTab });
     
     try {
-      // Find incoming edge to get reference image
+      // 收集所有连入当前视频节点的图片/视频，作为“全能参考”素材。
       const edges = getEdges();
       const nodes = getNodes();
       const incomingEdges = edges.filter(edge => edge.target === id);
       const referenceNodes = incomingEdges.map(edge => nodes.find(n => n.id === edge.source)).filter(Boolean);
-      const refImageNode = referenceNodes.find((n: any) => n?.type === 'imageNode' && n?.data?.imageUrl);
-      const referenceImage = (refImageNode?.data?.imageUrl as string) || null;
+      const referenceMedia = referenceNodes
+        .flatMap((node: any) => [
+          node?.data?.imageUrl ? { url: node.data.imageUrl, type: 'image' as const } : null,
+          node?.data?.videoUrl ? { url: node.data.videoUrl, type: 'video' as const } : null
+        ])
+        .filter((item): item is { url: string; type: 'image' | 'video' } => !!item && typeof item.url === 'string');
+
+      const { ensurePublicMediaUrl } = await import('../services/mediaUploadService');
+      const referenceMediaUrls: string[] = [];
+      for (let index = 0; index < referenceMedia.length; index += 1) {
+        const item = referenceMedia[index];
+        if (!/^https?:\/\//i.test(item.url)) {
+          const msg = `正在上传参考素材 ${index + 1}/${referenceMedia.length} 到 TOS...`;
+          setProgressMsg(msg);
+          updateNodeData(id, { progressMsg: msg });
+        }
+        referenceMediaUrls.push(await ensurePublicMediaUrl(item.url, item.type, index));
+      }
       
       const { generateDreaminaVideoAndWait } = await import('../api/dreaminaApi');
       const finalVideoUrl = await generateDreaminaVideoAndWait(
         prompt, 
-        referenceImage,
+        referenceMediaUrls[0] || null,
         (status: string) => {
           let msg = "";
           if (status === "submitted") msg = "任务已提交，排队中...";
-          if (status === "processing") msg = "正在努力渲染中 (耗时约1-3分钟)...";
+          if (status === "processing") msg = "正在生成视频中，通常需要 1-3 分钟...";
           setProgressMsg(msg);
           updateNodeData(id, { progressMsg: msg });
+        },
+        {
+          imageUrls: referenceMediaUrls,
+          ratio: aspectRatio,
+          duration,
+          resolution,
+          generateAudio: audioEnabled,
+          model: videoModel,
+          metadata: {
+            activeTab,
+            supportsAtReference: true
+          }
         }
       );
       
       setLoading(false);
       setProgressMsg("");
-      updateNodeData(id, { videoUrl: finalVideoUrl, isGenerating: false, progressMsg: "", prompt });
+      updateNodeData(id, { videoUrl: finalVideoUrl, isGenerating: false, progressMsg: "", prompt, activeTab, aspectRatio, resolution, duration, audioEnabled, videoModel });
     } catch (err: any) {
-      alert("视频生成出错: " + err.message);
+      alert("视频生成失败：" + err.message);
       setLoading(false);
       setProgressMsg("");
       updateNodeData(id, { isGenerating: false, progressMsg: "" });
     }
   };
-
   return (
     <>
       <NodeResizer color="transparent" handleClassName={resizerHandleStyle} minWidth={240} minHeight={100} isVisible={selected} keepAspectRatio={!!data.videoUrl} />
@@ -2165,7 +2192,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
   const [materialsCategory, setMaterialsCategory] = useState('全部');
   const [entitiesCategory, setEntitiesCategory] = useState('全部');
   const [myEntities, setMyEntities] = useState<any[]>([]);
-  const [activeRightPanel, setActiveRightPanel] = useState<{ type: MediaCapability, nodeId: string } | null>(null);
+  const [activeRightPanel, setActiveRightPanel] = useState<{ type: MediaCapability, nodeId: string, initialValues?: Record<string, any> } | null>(null);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
 
   const showToast = useCallback((message: string) => {
@@ -2227,9 +2254,30 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     onBackToProjects();
   }, [onBackToProjects]);
 
-  const handleOpenGenerate = useCallback(async (nodeId: string, options?: { aspectRatio?: string, resolution?: string, imageCount?: number, stylePreset?: string }) => {
-    setActiveRightPanel({ type: 'image_to_image', nodeId });
-  }, []);
+  const handleOpenGenerate = useCallback(async (nodeId: string, options?: { aspectRatio?: string, resolution?: string, imageCount?: number, stylePreset?: string, uiModel?: string }) => {
+    const currentNodes = getNodes();
+    const currentEdges = getEdges();
+    const targetNode = currentNodes.find(n => n.id === nodeId);
+    const upstreamImageUrls = currentEdges
+      .filter(edge => edge.target === nodeId)
+      .map(edge => currentNodes.find(n => n.id === edge.source))
+      .filter(sourceNode => sourceNode?.type === 'imageNode' && sourceNode.data?.imageUrl)
+      .map(sourceNode => sourceNode?.data?.imageUrl as string);
+
+    setActiveRightPanel({
+      type: 'image_to_image',
+      nodeId,
+      initialValues: {
+        prompt: targetNode?.data?.prompt || '',
+        reference_images: upstreamImageUrls,
+        aspect_ratio: options?.aspectRatio,
+        size: options?.resolution,
+        image_count: options?.imageCount,
+        style: options?.stylePreset,
+        ui_model: options?.uiModel
+      }
+    });
+  }, [getNodes, getEdges]);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -4479,6 +4527,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       {activeRightPanel && (
          <CapabilityPanel 
             capabilityId={activeRightPanel.type}
+            initialValues={activeRightPanel.initialValues}
             onClose={() => setActiveRightPanel(null)}
             onSuccess={(url) => {
                if (activeRightPanel.nodeId) {

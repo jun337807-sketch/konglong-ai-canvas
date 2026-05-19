@@ -8,11 +8,12 @@ import { Sparkles, Loader2, X } from 'lucide-react';
 
 interface Props {
   capabilityId: MediaCapability;
+  initialValues?: Record<string, any>;
   onClose?: () => void;
   onSuccess?: (url: string) => void;
 }
 
-export function CapabilityPanel({ capabilityId, onClose, onSuccess }: Props) {
+export function CapabilityPanel({ capabilityId, initialValues, onClose, onSuccess }: Props) {
   const capability = capabilityRegistry[capabilityId];
   
   const [formData, setFormData] = useState<Record<string, any>>({});
@@ -28,10 +29,10 @@ export function CapabilityPanel({ capabilityId, onClose, onSuccess }: Props) {
            initial[ctrl.paramKey] = ctrl.defaultValue;
          }
       });
-      setFormData(initial);
+      setFormData({ ...initial, ...(initialValues || {}) });
       setError(null);
     }
-  }, [capability]);
+  }, [capability, initialValues]);
 
   if (!capability) return null;
 

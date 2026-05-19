@@ -33,8 +33,11 @@ export interface ImageGenerationRequest {
   workspaceProjectId?: string;
   createdBy?: string;
   provider?: string;
+  model?: string;
+  uiModel?: string;
   referenceImageUrl?: string;
   referenceImageBase64?: string;
+  referenceImages?: string[];
   aspectRatio?: string;
   resolution?: string;
   metadata?: Record<string, unknown>;

@@ -1,6 +1,6 @@
-# OpenClaw / 阿里云快速部署清单
+﻿# OpenClaw / 阿里云快速部署清单
 
-这份清单给内部小组试用优先，不追求应用商城级别流程。目标路径建议：
+目标目录建议：
 
 ```text
 /home/admin/projects/konglong
@@ -8,11 +8,9 @@
 
 ## 1. 拉取项目
 
-如果服务器还没有项目目录：
-
 ```bash
 cd /home/admin/projects
-git clone https://github.com/jun337807-sketch/konglong.git konglong
+git clone https://github.com/jun337807-sketch/konglong-ai-canvas.git konglong
 cd /home/admin/projects/konglong
 ```
 
@@ -30,7 +28,7 @@ cp .env.example .env
 nano .env
 ```
 
-字段填写说明见：
+字段说明见：
 
 - [服务器 `.env` 填写说明](./env-template-guide.md)
 
@@ -39,49 +37,57 @@ nano .env
 ```bash
 PORT=3202
 NODE_ENV=production
-DEFAULT_ADMIN_PASSWORD=换成你的强密码
+DEFAULT_ADMIN_PASSWORD=请改成强密码
 SESSION_TTL_DAYS=14
 ```
 
-## 3. 配置三个外部 API
+## 3. 配置三个外部能力
 
 ### 火山 TOS
 
 ```bash
 TOS_ACCESS_KEY_ID=你的火山TOS AK
 TOS_ACCESS_KEY_SECRET=你的火山TOS SK
-TOS_BUCKET=你的bucket名称
+TOS_BUCKET=konglong
 TOS_REGION=cn-beijing
 TOS_ENDPOINT=tos-cn-beijing.volces.com
 TOS_PUBLIC_BASE_URL=
+ASSET_INGEST_TO_TOS=true
+VIDEO_REFERENCE_INGEST_TO_TOS=true
 ```
-
-如果你还没有绑定 CDN 或公开域名，`TOS_PUBLIC_BASE_URL` 可以先留空。
 
 ### 图片生成 API
 
 ```bash
-IMAGE_PROVIDER=external-image
-IMAGE_API_BASE_URL=你的图片生成API基础地址
+IMAGE_PROVIDER=openai-compatible
+IMAGE_API_BASE_URL=https://api.duolapi.cn
 IMAGE_API_KEY=你的图片生成API Key
 IMAGE_API_SUBMIT_PATH=/v1/images/generations
+IMAGE_API_EDIT_PATH=/v1/images/edits
+IMAGE_RESPONSE_FORMAT=b64_json
+IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2-fast
+IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview-4k
+IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
 ```
-
-如果你的图片生成接口路径不是 `/v1/images/generations`，只改 `IMAGE_API_SUBMIT_PATH`。
 
 ### 视频生成 API
 
 ```bash
-VIDEO_PROVIDER=volcengine-seedance
-VIDEO_API_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-VIDEO_API_KEY=你的视频生成API Key
-VIDEO_MODEL=doubao-seedance-2-0-260128
+VIDEO_PROVIDER=mjapi-monthly
+VIDEO_API_BASE_URL=https://api.mjapi.cc.cd
+VIDEO_API_KEY=你的视频月付Key
+VIDEO_API_AUTH_MODE=monthly-key
+VIDEO_API_SUBMIT_PATH=/v1/monthly/generate
+VIDEO_API_QUERY_PATH=/v1/monthly/task
+VIDEO_MODEL=r_sd2
+VIDEO_RESOLUTION=720p
 VIDEO_WATERMARK=true
+VIDEO_REFERENCE_INGEST_TO_TOS=true
 ```
 
-如果你的视频 API 不是火山 Ark / Seedance，后续只需要调整 provider adapter，不需要重写画布。
+说明：视频节点的全能参考会把上游图片/视频转成 `files` 提交；为避免中文文件名识别失败，建议保持 `VIDEO_REFERENCE_INGEST_TO_TOS=true`。
 
-## 4. 安装、构建、检查
+## 4. 安装、构建、自检
 
 ```bash
 npm install
@@ -89,24 +95,18 @@ npm run build
 npm run prestart:prod
 ```
 
-自检通过会看到类似：
+## 5. 启动
 
-```text
-[preflight] 检查通过，准备以 NODE_ENV=production PORT=3202 启动。
-```
-
-## 5. 启动方式 A：直接启动
-
-适合第一次试跑：
+第一次试跑：
 
 ```bash
 npm run start:prod
 ```
 
-浏览器访问：
+访问：
 
 ```text
-http://你的服务器IP:3202
+http://服务器IP:3202
 ```
 
 健康检查：
@@ -115,9 +115,7 @@ http://你的服务器IP:3202
 curl http://127.0.0.1:3202/api/health
 ```
 
-## 6. 启动方式 B：PM2 守护
-
-适合给小组长期使用：
+## 6. PM2 守护运行
 
 ```bash
 npm install -g pm2
@@ -125,7 +123,7 @@ npm run pm2:start
 pm2 save
 ```
 
-查看状态：
+查看：
 
 ```bash
 pm2 list
@@ -136,12 +134,6 @@ pm2 logs konglong-ai-canvas
 
 ```bash
 npm run pm2:restart
-```
-
-停止：
-
-```bash
-pm2 stop konglong-ai-canvas
 ```
 
 ## 7. 更新项目
@@ -168,12 +160,10 @@ data/konglong.sqlite
 cp data/konglong.sqlite data/konglong.sqlite.$(date +%Y%m%d%H%M%S).bak
 ```
 
-## 9. 当前推荐部署判断
-
-内部小组使用可以先部署试跑。上线前最低确认：
+## 9. 上线前确认
 
 - `.env` 没有提交到 GitHub
 - `DEFAULT_ADMIN_PASSWORD` 不是默认值
-- 服务器安全组开放了 `3202`
-- `3201` 继续留给原来的 `aivideo/backend`
-- PDF / Excel 只给可信成员上传
+- 安全组开放了 `3202`
+- `3201` 留给原来的 `aivideo/backend`
+- TOS Bucket 的公开访问策略能让第三方视频 API 拉取参考素材

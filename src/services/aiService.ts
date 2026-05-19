@@ -593,6 +593,9 @@ export async function runImageGeneration(
   options?: {
     workspaceProjectId?: string;
     createdBy?: string;
+    model?: string;
+    uiModel?: string;
+    referenceImages?: string[];
   }
 ): Promise<string> {
   try {
@@ -601,6 +604,9 @@ export async function runImageGeneration(
       referenceImageBase64,
       aspectRatio,
       resolution,
+      model: options?.model,
+      uiModel: options?.uiModel,
+      referenceImages: options?.referenceImages,
       workspaceProjectId: options?.workspaceProjectId,
       createdBy: options?.createdBy || localStorage.getItem('dino_currentUser') || 'system',
       metadata: {

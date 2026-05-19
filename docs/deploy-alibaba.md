@@ -26,14 +26,14 @@ PORT=3202
 如果你已经把代码推到 GitHub，例如：
 
 ```text
-https://github.com/jun337807-sketch/konglong.git
+https://github.com/jun337807-sketch/konglong-ai-canvas.git
 ```
 
 在服务器中执行：
 
 ```bash
 cd /home/admin/projects
-git clone https://github.com/jun337807-sketch/konglong.git konglong
+git clone https://github.com/jun337807-sketch/konglong-ai-canvas.git konglong
 cd /home/admin/projects/konglong
 ```
 
@@ -83,15 +83,19 @@ TOS_REGION=cn-beijing
 TOS_ENDPOINT=tos-cn-beijing.volces.com
 TOS_PUBLIC_BASE_URL=
 
-IMAGE_PROVIDER=external-image
-IMAGE_API_BASE_URL=你的图片生成 API 地址
+IMAGE_PROVIDER=openai-compatible
+IMAGE_API_BASE_URL=https://api.duolapi.cn
 IMAGE_API_KEY=你的图片生成 API Key
 IMAGE_API_SUBMIT_PATH=/v1/images/generations
 
-VIDEO_PROVIDER=volcengine-seedance
-VIDEO_API_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-VIDEO_API_KEY=你的火山 Ark / Seedance API Key
-VIDEO_MODEL=doubao-seedance-2-0-260128
+VIDEO_PROVIDER=mjapi-monthly
+VIDEO_API_BASE_URL=https://api.mjapi.cc.cd
+VIDEO_API_KEY=你的视频月付 Key
+VIDEO_API_AUTH_MODE=monthly-key
+VIDEO_API_SUBMIT_PATH=/v1/monthly/generate
+VIDEO_API_QUERY_PATH=/v1/monthly/task
+VIDEO_MODEL=r_sd2
+VIDEO_RESOLUTION=720p
 VIDEO_WATERMARK=true
 
 ASSET_INGEST_TO_TOS=false
@@ -241,7 +245,7 @@ PORT=3202 NODE_ENV=production npm run start:prod
 
 ```bash
 cd /home/admin/projects
-git clone https://github.com/jun337807-sketch/konglong.git konglong
+git clone https://github.com/jun337807-sketch/konglong-ai-canvas.git konglong
 cd /home/admin/projects/konglong
 cp .env.example .env
 nano .env
@@ -294,3 +298,4 @@ npm run prestart:prod
 - provider 队列和重试策略
 - Nginx 反向代理与 HTTPS
 - SQLite 定时备份
+
