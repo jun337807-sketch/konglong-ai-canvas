@@ -18,6 +18,19 @@ class ProjectService {
 
   async createProject(projectData: Partial<WorkspaceProject> & { group_id: string }): Promise<WorkspaceProject> {
     const projects = db.getProjects();
+    const existingIndex = projectData.project_id
+      ? projects.findIndex(project => project.project_id === projectData.project_id)
+      : -1;
+    if (existingIndex !== -1) {
+      projects[existingIndex] = {
+        ...projects[existingIndex],
+        ...projectData,
+        updated_at: projectData.updated_at || projects[existingIndex].updated_at || new Date().toISOString()
+      } as WorkspaceProject;
+      db.saveProjects(projects);
+      return Promise.resolve(projects[existingIndex]);
+    }
+
     const newProject: WorkspaceProject = {
       project_id: projectData.project_id || `proj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       group_id: projectData.group_id,

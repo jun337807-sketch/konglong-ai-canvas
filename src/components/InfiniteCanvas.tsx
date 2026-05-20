@@ -985,7 +985,7 @@ const ImageNode = ({ data, id, selected }: any) => {
                      className="absolute bottom-[calc(100%+8px)] left-0 w-[200px] bg-[#1E1E1E] border border-zinc-700/80 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] py-2 z-50 flex flex-col"
                      onClick={(e) => e.stopPropagation()}
                    >
-                     {['KONGLONG Image', 'KONGLONG Banana 2', 'KONGLONG Banana pro'].map(m => (
+                     {['KONGLONG Image', 'KONGLONG Banana 2', 'KONGLONG Banana pro', 'KONGLONG MJ'].map(m => (
                        <button
                          key={m}
                          onClick={(e) => { e.stopPropagation(); setModel(m); setShowModelMenu(false); }}

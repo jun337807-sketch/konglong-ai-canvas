@@ -25,6 +25,37 @@ export function listGroups(): DbGroup[] {
   return getSqliteDb().prepare(`SELECT * FROM groups ORDER BY updated_at DESC`).all() as DbGroup[];
 }
 
+export function findGroupById(id: string): DbGroup | undefined {
+  return getSqliteDb().prepare(`SELECT * FROM groups WHERE id = ?`).get(id) as DbGroup | undefined;
+}
+
+export function ensureGroup(input: {
+  id: string;
+  name: string;
+  description?: string;
+  createdBy: string;
+}): DbGroup {
+  const existing = findGroupById(input.id);
+  if (existing) return existing;
+
+  const now = new Date().toISOString();
+  const group: DbGroup = {
+    id: input.id,
+    name: input.name,
+    description: input.description || '',
+    created_by: input.createdBy,
+    created_at: now,
+    updated_at: now
+  };
+
+  getSqliteDb().prepare(`
+    INSERT INTO groups (id, name, description, created_by, created_at, updated_at)
+    VALUES (@id, @name, @description, @created_by, @created_at, @updated_at)
+  `).run(group);
+
+  return group;
+}
+
 export function createGroup(input: { name: string; description?: string; createdBy: string }): DbGroup {
   const now = new Date().toISOString();
   const group: DbGroup = {

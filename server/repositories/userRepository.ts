@@ -110,9 +110,14 @@ export function updateUser(
 
   const updated: DbUser = {
     ...existing,
-    ...updates,
     updated_at: new Date().toISOString()
   };
+
+  Object.entries(updates).forEach(([key, value]) => {
+    if (value !== undefined) {
+      (updated as any)[key] = value;
+    }
+  });
 
   db.prepare(`
     UPDATE users

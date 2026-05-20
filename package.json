@@ -9,6 +9,7 @@
     "build": "vite build && esbuild server/index.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "prestart:prod": "node scripts/preflight-production.mjs",
+    "reset:password": "node scripts/reset-admin-password.mjs",
     "start:prod": "npm run prestart:prod && node dist/server.cjs",
     "pm2:start": "npm run prestart:prod && pm2 start ecosystem.config.cjs",
     "pm2:restart": "npm run prestart:prod && pm2 restart ecosystem.config.cjs --update-env",

@@ -86,22 +86,24 @@ export const workspaceRepository = {
   },
 
   async listProjectsByGroup(groupId: string) {
-    const localProjects = await projectRepository.listByGroup(groupId);
     try {
       const res = await fetch(`/api/groups/${groupId}/projects`).then(r => r.json());
       if (res.success) {
         const apiProjects = (res.projects || []).map(mapApiProject);
-        const merged = [...localProjects];
-        for (const project of apiProjects) {
-          if (!merged.some(item => item.project_id === project.project_id)) {
-            merged.push(project);
-          }
-        }
-        return merged.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+        await Promise.all(apiProjects.map((project: WorkspaceProject) => projectRepository.create({
+          project_id: project.project_id,
+          group_id: project.group_id || groupId,
+          project_name: project.project_name,
+          project_type: project.project_type,
+          description: project.description,
+          canvas_ids: project.canvas_ids
+        }).catch(() => null)));
+        return apiProjects.sort((a: WorkspaceProject, b: WorkspaceProject) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
       }
     } catch (e) {
       console.warn('Failed to load projects from API, falling back to local storage', e);
     }
+    const localProjects = await projectRepository.listByGroup(groupId);
     return localProjects;
   },
 

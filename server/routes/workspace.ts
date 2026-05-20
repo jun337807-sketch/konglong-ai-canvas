@@ -4,6 +4,7 @@ import {
   createWorkspaceProject,
   deleteGroup,
   deleteWorkspaceProject,
+  ensureGroup,
   listGroups,
   listProjectsByGroup,
   updateGroup,
@@ -13,6 +14,19 @@ import { resolveActorUserId } from '../repositories/userRepository.js';
 import { writeAuditLog } from '../services/auditLogService.js';
 
 const router = Router();
+
+function ensurePersonalGroup(groupId: string, createdBy?: string) {
+  if (!groupId.startsWith('personal_')) return;
+
+  const username = groupId.slice('personal_'.length);
+  const actorUserId = resolveActorUserId(createdBy || username || 'system');
+  ensureGroup({
+    id: groupId,
+    name: '个人工作区',
+    description: '系统自动创建的个人工作区',
+    createdBy: actorUserId
+  });
+}
 
 router.get('/groups', (_req, res) => {
   res.json({ success: true, groups: listGroups() });
@@ -51,6 +65,7 @@ router.delete('/groups/:id', (req, res) => {
 });
 
 router.get('/groups/:groupId/projects', (req, res) => {
+  ensurePersonalGroup(req.params.groupId);
   res.json({ success: true, projects: listProjectsByGroup(req.params.groupId) });
 });
 
@@ -60,6 +75,7 @@ router.post('/groups/:groupId/projects', (req, res) => {
     return res.status(400).json({ success: false, error: 'name and createdBy are required' });
   }
   const actorUserId = resolveActorUserId(createdBy);
+  ensurePersonalGroup(req.params.groupId, createdBy);
   const project = createWorkspaceProject({
     groupId: req.params.groupId,
     name,

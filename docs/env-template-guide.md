@@ -65,16 +65,18 @@ IMAGE_API_KEY=你的图片生成API Key
 IMAGE_API_SUBMIT_PATH=/v1/images/generations
 IMAGE_API_EDIT_PATH=/v1/images/edits
 IMAGE_RESPONSE_FORMAT=b64_json
-IMAGE_MODEL=gpt-image-2-fast
-IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2-fast
-IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview-4k
+IMAGE_MODEL=gpt-image-2
+IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
+IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
 IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
+IMAGE_MODEL_KONGLONG_MJ=mj_imagine
 ```
 
 前端模型映射：
 - `KONGLONG Image` → `IMAGE_MODEL_KONGLONG_IMAGE`
 - `KONGLONG Banana 2` → `IMAGE_MODEL_KONGLONG_BANANA_2`
 - `KONGLONG Banana pro` → `IMAGE_MODEL_KONGLONG_BANANA_PRO`
+- `KONGLONG MJ` → `IMAGE_MODEL_KONGLONG_MJ`
 
 没有参考图时走 `/v1/images/generations`；有上游参考图时走 `/v1/images/edits`。
 
@@ -130,10 +132,11 @@ IMAGE_API_KEY=你的图片生成API Key
 IMAGE_API_SUBMIT_PATH=/v1/images/generations
 IMAGE_API_EDIT_PATH=/v1/images/edits
 IMAGE_RESPONSE_FORMAT=b64_json
-IMAGE_MODEL=gpt-image-2-fast
-IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2-fast
-IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview-4k
+IMAGE_MODEL=gpt-image-2
+IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
+IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
 IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
+IMAGE_MODEL_KONGLONG_MJ=mj_imagine
 
 VIDEO_PROVIDER=mjapi-monthly
 VIDEO_API_BASE_URL=https://api.mjapi.cc.cd

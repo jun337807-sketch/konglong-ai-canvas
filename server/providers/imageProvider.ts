@@ -38,14 +38,18 @@ function resolveImageModel(input: ImageGenerationInput) {
   }
 
   if (uiModel.includes('banana 2') || uiModel.includes('banan 2')) {
-    return process.env.IMAGE_MODEL_KONGLONG_BANANA_2 || 'gemini-3.1-flash-image-preview-4k';
+    return process.env.IMAGE_MODEL_KONGLONG_BANANA_2 || 'gemini-3.1-flash-image-preview';
+  }
+
+  if (uiModel.includes('konglong mj')) {
+    return process.env.IMAGE_MODEL_KONGLONG_MJ || 'mj_imagine';
   }
 
   if (uiModel.includes('konglong image')) {
-    return process.env.IMAGE_MODEL_KONGLONG_IMAGE || process.env.IMAGE_MODEL || 'gpt-image-2-fast';
+    return process.env.IMAGE_MODEL_KONGLONG_IMAGE || process.env.IMAGE_MODEL || 'gpt-image-2';
   }
 
-  return process.env.IMAGE_MODEL || process.env.IMAGE_MODEL_KONGLONG_IMAGE || 'gpt-image-2-fast';
+  return process.env.IMAGE_MODEL || process.env.IMAGE_MODEL_KONGLONG_IMAGE || 'gpt-image-2';
 }
 
 function resolveImageSize(aspectRatio = '1:1', resolution = '1K'): ImageSize {
