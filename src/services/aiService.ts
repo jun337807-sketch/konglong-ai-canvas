@@ -596,11 +596,13 @@ export async function runImageGeneration(
     model?: string;
     uiModel?: string;
     referenceImages?: string[];
+    imageCount?: number;
   }
 ): Promise<string> {
+  const normalizedPrompt = buildImageGenerationPrompt(prompt, aspectRatio, resolution);
   try {
     const { result } = await generationRepository.submitImage({
-      prompt,
+      prompt: normalizedPrompt,
       referenceImageBase64,
       aspectRatio,
       resolution,
@@ -610,7 +612,8 @@ export async function runImageGeneration(
       workspaceProjectId: options?.workspaceProjectId,
       createdBy: options?.createdBy || localStorage.getItem('dino_currentUser') || 'system',
       metadata: {
-        source: 'runImageGeneration'
+        source: 'runImageGeneration',
+        imageCount: options?.imageCount || 1
       }
     });
 
@@ -625,7 +628,12 @@ export async function runImageGeneration(
     if (error.name === 'AbortError' || signal?.aborted) {
       throw new Error("Task cancelled by user");
     }
-    console.warn("Backend image provider unavailable, falling back to Pollinations:", error);
+    const allowImageFallback = (import.meta as any).env?.VITE_ENABLE_IMAGE_FALLBACK === 'true';
+    if (!allowImageFallback) {
+      console.error("Backend image provider unavailable:", error);
+      throw new Error(`图片生成 API 未接通或调用失败：${error?.message || '未知错误'}。请检查服务器 .env 中 IMAGE_API_BASE_URL / IMAGE_API_KEY / IMAGE_PROVIDER 配置。`);
+    }
+    console.warn("Backend image provider unavailable, falling back to Pollinations because VITE_ENABLE_IMAGE_FALLBACK=true:", error);
   }
 
   // Use Pollinations API for free image generation testing
@@ -653,7 +661,7 @@ export async function runImageGeneration(
     }
   }
 
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?nologo=true&seed=${seed}&width=${width}&height=${height}`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(normalizedPrompt)}?nologo=true&seed=${seed}&width=${width}&height=${height}`;
   
   try {
     const response = await fetch(url, { signal });
@@ -677,6 +685,31 @@ export async function runImageGeneration(
     console.error("Image Generation Error:", error);
     throw new Error(error.message || "图像生成失败，请重试");
   }
+}
+
+function buildImageGenerationPrompt(prompt: string, aspectRatio: string, resolution: string) {
+  const normalizedRatio = !aspectRatio || aspectRatio === '自适应' || aspectRatio === 'Auto' ? '1:1' : aspectRatio;
+  const ratioText = normalizedRatio === '9:16'
+    ? '9:16 竖屏构图'
+    : normalizedRatio === '16:9'
+      ? '16:9 横屏构图'
+      : `${normalizedRatio} 构图`;
+  const resolutionText = resolution?.toUpperCase() === '4K'
+    ? '4K 超高清输出，细节锐利'
+    : resolution?.toUpperCase() === '2K'
+      ? '2K 高清输出，细节清晰'
+      : '高清输出';
+  const promptWithoutConflictingRatio = prompt
+    .replace(/(?:^|[\s，,；;、])(?:\d{1,2}\s*[:：]\s*\d{1,2})(?=[\s，,；;、]|$)/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return [
+    promptWithoutConflictingRatio || prompt,
+    '',
+    `【画幅硬性要求】必须生成 ${ratioText}，不要使用与该比例冲突的画幅；如果原提示词含其它比例，以这里为准。`,
+    `【清晰度硬性要求】${resolutionText}，不要低清、不要压缩模糊、不要拉伸变形。`
+  ].join('\n');
 }
 
 async function imageUrlToDataUrl(url: string, signal?: AbortSignal): Promise<string> {

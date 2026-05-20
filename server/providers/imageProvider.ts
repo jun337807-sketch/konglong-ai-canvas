@@ -79,6 +79,31 @@ function resolveImageSize(aspectRatio = '1:1', resolution = '1K'): ImageSize {
   return { width, height, size: `${width}x${height}` };
 }
 
+function buildProviderPrompt(prompt: string, aspectRatio = '1:1', resolution = '1K') {
+  const normalizedRatio = !aspectRatio || aspectRatio === '自适应' || aspectRatio === 'Auto' ? '1:1' : aspectRatio;
+  const ratioText = normalizedRatio === '9:16'
+    ? '9:16 vertical portrait composition'
+    : normalizedRatio === '16:9'
+      ? '16:9 horizontal landscape composition'
+      : `${normalizedRatio} composition`;
+  const resolutionText = resolution.toUpperCase() === '4K'
+    ? 'true 4K ultra high resolution, sharp details'
+    : resolution.toUpperCase() === '2K'
+      ? 'true 2K high resolution, clear details'
+      : 'high resolution';
+  const promptWithoutConflictingRatio = prompt
+    .replace(/(?:^|[\s，,；;、])(?:\d{1,2}\s*[:：]\s*\d{1,2})(?=[\s，,；;、]|$)/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return [
+    promptWithoutConflictingRatio || prompt,
+    '',
+    `Hard requirement: generate in ${ratioText}. Ignore any conflicting aspect ratio in the user prompt.`,
+    `Hard requirement: ${resolutionText}. Do not stretch, distort, blur, or upscale a low-resolution image.`
+  ].join('\n');
+}
+
 function normalizeImageUrl(data: any) {
   return (
     data.url ||
@@ -131,12 +156,15 @@ function buildOpenAICompatibleBody(input: ImageGenerationInput) {
 
   return {
     model,
-    prompt: input.prompt,
+    prompt: buildProviderPrompt(input.prompt, input.aspectRatio, input.resolution),
     n: Number(input.metadata?.imageCount || 1),
     size: imageSize.size,
+    image_size: imageSize.size,
+    dimensions: imageSize.size,
     width: imageSize.width,
     height: imageSize.height,
     quality: input.resolution?.toUpperCase() === '4K' ? 'hd' : 'standard',
+    output_quality: input.resolution?.toUpperCase() === '1K' ? 'standard' : 'high',
     response_format: process.env.IMAGE_RESPONSE_FORMAT || 'b64_json',
     image: referenceImage,
     images: referenceImages,
@@ -145,11 +173,17 @@ function buildOpenAICompatibleBody(input: ImageGenerationInput) {
     reference_image_url: input.referenceImageUrl,
     reference_image_base64: input.referenceImageBase64,
     aspect_ratio: input.aspectRatio,
+    aspectRatio: input.aspectRatio,
+    ratio: input.aspectRatio,
     resolution: input.resolution,
+    output_resolution: input.resolution,
     metadata: {
       ...(input.metadata || {}),
       uiModel: input.uiModel,
-      resolvedModel: model
+      resolvedModel: model,
+      requestedWidth: imageSize.width,
+      requestedHeight: imageSize.height,
+      requestedSize: imageSize.size
     }
   };
 }

@@ -113,3 +113,7 @@ export function updateWorkspaceProject(
   `).run(updated);
   return updated;
 }
+
+export function deleteWorkspaceProject(id: string) {
+  return getSqliteDb().prepare(`DELETE FROM workspace_projects WHERE id = ?`).run(id).changes > 0;
+}

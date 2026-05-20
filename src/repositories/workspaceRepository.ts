@@ -162,5 +162,19 @@ export const workspaceRepository = {
       console.warn('Failed to move project via API, falling back to local storage', e);
       return projectRepository.update(projectId, { group_id: groupId });
     }
+  },
+
+  async removeProject(projectId: string) {
+    try {
+      const res = await fetch(`/api/workspace-projects/${projectId}`, { method: 'DELETE' }).then(r => r.json());
+      if (res.success) {
+        await projectRepository.remove(projectId);
+        return true;
+      }
+      throw new Error(res.error || 'Failed to remove project');
+    } catch (e) {
+      console.warn('Failed to remove project via API, falling back to local storage', e);
+      return projectRepository.remove(projectId);
+    }
   }
 };

@@ -41,6 +41,14 @@ class ProjectService {
     db.saveProjects(projects);
     return Promise.resolve(projects[index]);
   }
+
+  async deleteProject(projectId: string): Promise<boolean> {
+    const projects = db.getProjects();
+    const nextProjects = projects.filter(p => p.project_id !== projectId);
+    db.saveProjects(nextProjects);
+    localStorage.removeItem(`infinite-canvas-project-${projectId}`);
+    return Promise.resolve(nextProjects.length !== projects.length);
+  }
 }
 
 export const projectService = new ProjectService();

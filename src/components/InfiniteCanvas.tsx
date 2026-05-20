@@ -73,7 +73,7 @@ const resizerHandleStyle = "w-2 h-2 bg-white/50 rounded-sm border-none shadow-[0
 const entityCategories = ['人物', '场景', '道具', '特效', '其他'];
 
 const FloatingPlusHandle = ({ type, position, title }: { type: 'source' | 'target'; position: Position; title?: string }) => (
-  <div className={`absolute top-1/2 -translate-y-1/2 ${position === Position.Left ? '-left-11' : '-right-11'} z-40 opacity-0 group-hover:opacity-100 transition-opacity`}>
+  <div className={`absolute top-0 bottom-0 ${position === Position.Left ? '-left-16' : '-right-16'} w-16 z-40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center`}>
     <Handle type={type} position={position} className={plusHandleStyle} title={title || '按住拖拽连接'}>
       <Plus size={14} />
     </Handle>
@@ -567,7 +567,11 @@ const ImageNode = ({ data, id, selected }: any) => {
     if (naturalWidth && naturalHeight && data.aspectRatioLockedFor !== data.imageUrl) {
       const node = getNode(id);
       if (node) {
-        const aspect = naturalWidth / naturalHeight;
+        const requestedRatio = typeof data.requestedAspectRatio === 'string' ? data.requestedAspectRatio : '';
+        const [requestedX, requestedY] = requestedRatio.split(':').map(Number);
+        const aspect = Number.isFinite(requestedX) && Number.isFinite(requestedY) && requestedX > 0 && requestedY > 0
+          ? requestedX / requestedY
+          : naturalWidth / naturalHeight;
         const currentWidth = node.style?.width ? parseInt(node.style.width as string) : 320;
         const targetHeight = Math.round(currentWidth / aspect);
         
@@ -637,7 +641,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         position={Position.Top}
         className="flex items-center gap-1 p-1 bg-[#1a1b1e]/95 backdrop-blur-xl border border-zinc-700/80 rounded-xl shadow-2xl z-50 mb-2 relative"
       >
-        <button onClick={() => handleAction('preview')} className="p-1.5 text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10 rounded-lg tooltip relative" title="预览"><Eye size={15} /></button>
+        <button onClick={() => handleAction('preview')} className="p-1.5 text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10 rounded-lg tooltip relative" title="预览"><Maximize size={15} /></button>
         <button onClick={() => setShowMultiAngle(!showMultiAngle)} className={`p-1.5 rounded-lg tooltip ${showMultiAngle ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10'}`} title="多角度"><Move3D size={15} /></button>
         <button onClick={() => handleAction('relight')} className="p-1.5 text-zinc-400 hover:text-[#00bcd4] hover:bg-[#00bcd4]/10 rounded-lg tooltip" title="打光"><Sun size={15} /></button>
         <div className="w-px h-4 bg-zinc-700 mx-0.5"></div>
@@ -676,7 +680,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         <button onClick={() => handleAction('annotate')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="标注"><Focus size={15} /></button>
         <button onClick={() => handleAction('rotate')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="旋转"><RotateCw size={15} /></button>
         <button onClick={() => handleAction('download')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="下载"><Download size={15} /></button>
-        <button onClick={() => handleAction('panorama')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="全景"><Maximize size={15} /></button>
+        <button onClick={() => handleAction('panorama')} className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg tooltip" title="全景"><Eye size={15} /></button>
       </NodeToolbar>
       
       <div className={`${nodeBg} border-[1.5px] ${selected ? selectedBorder : defaultBorder} rounded-2xl p-0 shadow-sm hover:shadow-[0_0_15px_rgba(0,188,212,0.15)] transition-shadow w-full h-full flex flex-col relative group`}>
@@ -703,7 +707,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         )}
         
         {/* Right '+' Connection Handle: click opens quick add, drag creates edge */}
-        <div className={`absolute top-1/2 -translate-y-1/2 -right-11 z-40 transition-opacity ${showAddMenu ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+        <div className={`absolute top-0 bottom-0 -right-16 w-16 z-40 transition-opacity flex items-center justify-center ${showAddMenu ? 'opacity-100' : 'opacity-0 hover:opacity-100'}`}>
            <Handle
              type="source"
              position={Position.Right}
@@ -715,7 +719,7 @@ const ImageNode = ({ data, id, selected }: any) => {
            </Handle>
 
            {showAddMenu && (
-             <div className="absolute top-0 left-full ml-2 bg-[#2A2A2A] border border-zinc-700/80 rounded-xl shadow-2xl p-2 w-48 flex flex-col gap-1 z-[100]" onClick={e => e.stopPropagation()}>
+             <div className="absolute top-1/2 -translate-y-1/2 left-full ml-2 bg-[#2A2A2A] border border-zinc-700/80 rounded-xl shadow-2xl p-2 w-48 flex flex-col gap-1 z-[100]" onClick={e => e.stopPropagation()}>
                <div className="text-xs text-zinc-500 font-medium px-2 py-1.5 mb-1">引用该节点生成</div>
                <button onClick={(e) => { e.stopPropagation(); if(data.onAddNode) data.onAddNode('textNode', undefined, undefined, id); setShowAddMenu(false); }} className="flex items-center gap-3 w-full px-2 py-2 hover:bg-zinc-700/50 rounded-lg transition-colors text-zinc-300">
                  <div className="w-6 h-6 rounded bg-zinc-800 flex items-center justify-center"><Type size={12} /></div>
@@ -1585,31 +1589,6 @@ const VideoNode = ({ data, id, selected }: any) => {
              </div>
           )}
 
-          {/* Absolute Upload button inside media area when not loaded */}
-          {!data.videoUrl && !loading && (
-            <div className={`absolute top-4 right-4 transition-all duration-200 z-[100] opacity-0 group-hover:opacity-100`}>
-              <label className="flex items-center gap-2 px-3 py-1.5 bg-[#2A2A2A] border border-zinc-700 hover:bg-zinc-700 text-zinc-300 rounded-lg cursor-pointer text-sm shadow-[0_0_20px_rgba(0,0,0,0.5)] pointer-events-auto">
-                <Upload size={14} /> 上传
-                <input 
-                  type="file" 
-                  accept="video/*" 
-                  className="hidden" 
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = (ev) => {
-                        const url = ev.target?.result as string;
-                        if (data.onUpload) data.onUpload(id, url, 'video');
-                        else updateNodeData(id, { videoUrl: url });
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  }} 
-                />
-              </label>
-            </div>
-          )}
         </div>
       </div>
 
@@ -2702,21 +2681,37 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           workspaceProjectId: projectId,
           createdBy: currentUser || 'system',
           uiModel: options?.uiModel,
-          referenceImages: upstreamImageUrls
+          referenceImages: upstreamImageUrls,
+          imageCount: options?.imageCount || 1
         }
       );
 
-      patchNodeData({
-        imageUrl,
-        isGenerating: false,
-        progress: 100,
-        progressMsg: '',
-        aspectRatio: options?.aspectRatio,
-        resolution: options?.resolution,
-        imageCount: options?.imageCount,
-        stylePreset: options?.stylePreset,
-        uiModel: options?.uiModel
-      });
+      const requestedRatio = options?.aspectRatio || '16:9';
+      const [ratioX, ratioY] = requestedRatio.split(':').map(Number);
+      setNodes(nds => nds.map(node => {
+        if (node.id !== nodeId) return node;
+        const currentWidth = Number(node.style?.width || node.width || 320);
+        const nextHeight = Number.isFinite(ratioX) && Number.isFinite(ratioY) && ratioX > 0 && ratioY > 0
+          ? Math.round(currentWidth * (ratioY / ratioX))
+          : Number(node.style?.height || node.height || 320);
+        return {
+          ...node,
+          style: { ...node.style, width: currentWidth, height: nextHeight },
+          data: {
+            ...node.data,
+            imageUrl,
+            isGenerating: false,
+            progress: 100,
+            progressMsg: '',
+            aspectRatio: options?.aspectRatio,
+            resolution: options?.resolution,
+            imageCount: options?.imageCount,
+            stylePreset: options?.stylePreset,
+            uiModel: options?.uiModel,
+            requestedAspectRatio: requestedRatio
+          }
+        };
+      }));
       if (queueTaskId) {
         await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'completed', { url: imageUrl });
       }

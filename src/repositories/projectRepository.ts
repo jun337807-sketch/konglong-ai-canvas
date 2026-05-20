@@ -5,6 +5,7 @@ export interface ProjectRepository {
   listByGroup(groupId: string): Promise<WorkspaceProject[]>;
   create(input: Partial<WorkspaceProject> & { group_id: string }): Promise<WorkspaceProject>;
   update(projectId: string, updates: Partial<WorkspaceProject>): Promise<WorkspaceProject | null>;
+  remove(projectId: string): Promise<boolean>;
 }
 
 class LocalProjectRepository implements ProjectRepository {
@@ -18,6 +19,10 @@ class LocalProjectRepository implements ProjectRepository {
 
   update(projectId: string, updates: Partial<WorkspaceProject>) {
     return projectService.updateProject(projectId, updates);
+  }
+
+  remove(projectId: string) {
+    return projectService.deleteProject(projectId);
   }
 }
 

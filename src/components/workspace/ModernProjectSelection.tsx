@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Edit2, Layers, Plus, RotateCw, Share2, Sparkles, Users, X } from 'lucide-react';
+import { ArrowLeft, Edit2, Layers, Plus, RotateCw, Share2, Sparkles, Trash2, Users, X } from 'lucide-react';
 import { workspaceRepository } from '../../repositories/workspaceRepository';
 import { WorkspaceProject } from '../../types/workspace';
 
@@ -83,6 +83,13 @@ export function ModernProjectSelection({
     loadProjects();
   };
 
+  const handleDeleteProject = async (e: React.MouseEvent, project: WorkspaceProject) => {
+    e.stopPropagation();
+    if (!confirm(`确定删除项目「${project.project_name}」吗？该操作不可恢复。`)) return;
+    setProjects(prev => prev.filter(item => item.project_id !== project.project_id));
+    await workspaceRepository.removeProject(project.project_id);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-[#0E0F11] flex flex-col pt-16 animate-in fade-in">
       <div className="absolute top-4 left-4 z-[100]">
@@ -153,6 +160,13 @@ export function ModernProjectSelection({
                         </button>
                       </h3>
                     )}
+                    <button
+                      onClick={(e) => handleDeleteProject(e, project)}
+                      className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-2 rounded-xl bg-zinc-950/80 border border-zinc-800 text-zinc-500 hover:text-rose-400 hover:border-rose-500/40 hover:bg-rose-500/10 transition-all"
+                      title="删除项目"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                   <p className="text-sm text-zinc-400">类型：{project.project_type}</p>
                 </div>

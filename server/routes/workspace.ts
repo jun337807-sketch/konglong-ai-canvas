@@ -3,6 +3,7 @@ import {
   createGroup,
   createWorkspaceProject,
   deleteGroup,
+  deleteWorkspaceProject,
   listGroups,
   listProjectsByGroup,
   updateGroup,
@@ -86,6 +87,12 @@ router.patch('/workspace-projects/:id', (req, res) => {
   });
   if (!updated) return res.status(404).json({ success: false, error: 'project not found' });
   res.json({ success: true, project: updated });
+});
+
+router.delete('/workspace-projects/:id', (req, res) => {
+  const deleted = deleteWorkspaceProject(req.params.id);
+  if (!deleted) return res.status(404).json({ success: false, error: 'project not found' });
+  res.json({ success: true });
 });
 
 export default router;
