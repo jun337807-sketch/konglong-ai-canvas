@@ -24,8 +24,36 @@ function getImageEditPath() {
   return process.env.IMAGE_API_EDIT_PATH || '/v1/images/edits';
 }
 
+function getMjApiBaseUrl() {
+  return (process.env.IMAGE_MJ_API_BASE_URL || process.env.IMAGE_API_BASE_URL || '').replace(/\/$/, '');
+}
+
+function getMjSubmitPath() {
+  return process.env.IMAGE_MJ_SUBMIT_PATH || '/mj/submit/imagine';
+}
+
+function getMjTaskPath(taskId: string) {
+  const template = process.env.IMAGE_MJ_TASK_PATH_TEMPLATE || '/mj/task/{taskId}/fetch';
+  return template.replace('{taskId}', encodeURIComponent(taskId));
+}
+
 function normalizeUiModel(value?: string) {
   return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function resolveBanana2Model(resolution?: string) {
+  const normalizedResolution = (resolution || '').trim().toUpperCase();
+  if (normalizedResolution === '4K') {
+    return process.env.IMAGE_MODEL_KONGLONG_BANANA_2_4K
+      || process.env.IMAGE_MODEL_KONGLONG_BANANA_2
+      || 'gemini-3.1-flash-image-preview-4k';
+  }
+  if (normalizedResolution === '2K') {
+    return process.env.IMAGE_MODEL_KONGLONG_BANANA_2_2K
+      || process.env.IMAGE_MODEL_KONGLONG_BANANA_2
+      || 'gemini-3.1-flash-image-preview-2k';
+  }
+  return process.env.IMAGE_MODEL_KONGLONG_BANANA_2 || 'gemini-3.1-flash-image-preview';
 }
 
 function resolveImageModel(input: ImageGenerationInput) {
@@ -38,7 +66,7 @@ function resolveImageModel(input: ImageGenerationInput) {
   }
 
   if (uiModel.includes('banana 2') || uiModel.includes('banan 2')) {
-    return process.env.IMAGE_MODEL_KONGLONG_BANANA_2 || 'gemini-3.1-flash-image-preview';
+    return resolveBanana2Model(input.resolution);
   }
 
   if (uiModel.includes('konglong mj')) {
@@ -50,6 +78,12 @@ function resolveImageModel(input: ImageGenerationInput) {
   }
 
   return process.env.IMAGE_MODEL || process.env.IMAGE_MODEL_KONGLONG_IMAGE || 'gpt-image-2';
+}
+
+function isMjImageInput(input: ImageGenerationInput) {
+  const uiModel = normalizeUiModel(input.uiModel || String(input.metadata?.uiModel || ''));
+  const explicitModel = (input.model || '').trim().toLowerCase();
+  return uiModel.includes('konglong mj') || explicitModel === 'mj_imagine' || resolveImageModel(input) === 'mj_imagine';
 }
 
 function resolveImageSize(aspectRatio = '1:1', resolution = '1K'): ImageSize {
@@ -106,6 +140,18 @@ function buildProviderPrompt(prompt: string, aspectRatio = '1:1', resolution = '
     `Hard requirement: generate in ${ratioText}. Ignore any conflicting aspect ratio in the user prompt.`,
     `Hard requirement: ${resolutionText}. Do not stretch, distort, blur, or upscale a low-resolution image.`
   ].join('\n');
+}
+
+function buildMjPrompt(prompt: string, aspectRatio = '1:1') {
+  const normalizedRatio = !aspectRatio || aspectRatio === '自适应' || aspectRatio === 'Auto' ? '' : aspectRatio;
+  const promptWithoutConflictingRatio = prompt
+    .replace(/\s--ar\s+\d{1,2}\s*:\s*\d{1,2}/gi, ' ')
+    .replace(/(?:^|[\s，,；;、])(?:\d{1,2}\s*[:：]\s*\d{1,2})(?=[\s，,；;、]|$)/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return normalizedRatio
+    ? `${promptWithoutConflictingRatio || prompt} --ar ${normalizedRatio}`
+    : (promptWithoutConflictingRatio || prompt);
 }
 
 function normalizeImageUrl(data: any) {
@@ -251,7 +297,122 @@ async function requestMultipart(endpoint: string, body: FormData) {
   });
 }
 
+async function requestMjJson(endpoint: string, body: Record<string, unknown>) {
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${requireEnv('IMAGE_API_KEY')}`
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+async function queryMjTask(baseUrl: string, taskId: string) {
+  const primaryPath = getMjTaskPath(taskId);
+  const fallbackPath = `/mj/task/${encodeURIComponent(taskId)}`;
+  const paths = primaryPath === fallbackPath ? [primaryPath] : [primaryPath, fallbackPath];
+  let lastError: { status: number; endpoint: string; body: any } | undefined;
+
+  for (const path of paths) {
+    const endpoint = `${baseUrl}${path}`;
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${requireEnv('IMAGE_API_KEY')}` }
+    });
+    const body = await response.json().catch(async () => ({ text: await response.text() }));
+
+    if (response.ok) {
+      return { body, endpoint };
+    }
+
+    lastError = { status: response.status, endpoint, body };
+    if (response.status !== 404) break;
+  }
+
+  throw new Error(`MJ query failed (${lastError?.status}) endpoint=${lastError?.endpoint}: ${JSON.stringify(lastError?.body)}`);
+}
+
+async function submitMjImagineGeneration(input: ImageGenerationInput): Promise<ProviderTaskResult> {
+  const baseUrl = getMjApiBaseUrl();
+  if (!baseUrl) throw new Error('Missing required environment variable: IMAGE_MJ_API_BASE_URL or IMAGE_API_BASE_URL');
+
+  const provider = input.provider || process.env.IMAGE_PROVIDER || 'mj-proxy';
+  const submitEndpoint = `${baseUrl}${getMjSubmitPath()}`;
+  const prompt = buildMjPrompt(input.prompt, input.aspectRatio);
+
+  const submitResponse = await requestMjJson(submitEndpoint, {
+    prompt,
+    state: JSON.stringify({
+      uiModel: input.uiModel,
+      aspectRatio: input.aspectRatio,
+      resolution: input.resolution
+    })
+  });
+  const submitRaw = await submitResponse.json().catch(async () => ({ text: await submitResponse.text() }));
+  if (!submitResponse.ok) {
+    throw new Error(`MJ submit failed (${submitResponse.status}) endpoint=${submitEndpoint}: ${JSON.stringify(submitRaw)}`);
+  }
+
+  const taskId = String((submitRaw as any).result || (submitRaw as any).id || '');
+  const submitCode = Number((submitRaw as any).code);
+  if (!taskId || ![1, 22].includes(submitCode)) {
+    throw new Error(`MJ submit rejected endpoint=${submitEndpoint}: ${JSON.stringify(submitRaw)}`);
+  }
+
+  const timeoutMs = Number(process.env.IMAGE_MJ_POLL_TIMEOUT_MS || 180000);
+  const intervalMs = Number(process.env.IMAGE_MJ_POLL_INTERVAL_MS || 3000);
+  const startedAt = Date.now();
+  let lastTask: any = submitRaw;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    const { body: task, endpoint: queryEndpoint } = await queryMjTask(baseUrl, taskId);
+    lastTask = task;
+
+    if (task.status === 'SUCCESS' && task.imageUrl) {
+      return {
+        provider,
+        providerTaskId: taskId,
+        status: 'succeeded',
+        url: task.imageUrl,
+        raw: {
+          ...task,
+          request: {
+            provider,
+            model: 'mj_imagine',
+            endpoint: getMjSubmitPath(),
+            queryEndpoint: getMjTaskPath(taskId),
+            aspectRatio: input.aspectRatio
+          }
+        }
+      };
+    }
+
+    if (task.status === 'FAILURE' || task.status === 'CANCEL') {
+      return {
+        provider,
+        providerTaskId: taskId,
+        status: 'failed',
+        errorMessage: task.failReason || task.description || 'MJ task failed',
+        raw: task
+      };
+    }
+  }
+
+  return {
+    provider,
+    providerTaskId: taskId,
+    status: 'failed',
+    errorMessage: `MJ task timeout after ${timeoutMs}ms`,
+    raw: lastTask
+  };
+}
+
 export async function submitImageGeneration(input: ImageGenerationInput): Promise<ProviderTaskResult> {
+  if (isMjImageInput(input)) {
+    return submitMjImagineGeneration(input);
+  }
+
   const provider = input.provider || process.env.IMAGE_PROVIDER || 'openai-compatible';
   const referenceImages = collectReferenceImages(input);
   const hasReferenceImages = referenceImages.length > 0;
@@ -265,7 +426,7 @@ export async function submitImageGeneration(input: ImageGenerationInput): Promis
 
   const raw = await response.json().catch(async () => ({ text: await response.text() }));
   if (!response.ok) {
-    throw new Error(`Image provider request failed (${response.status}): ${JSON.stringify(raw)}`);
+    throw new Error(`Image provider request failed (${response.status}) model=${body.model} endpoint=${endpoint} size=${body.size}: ${JSON.stringify(raw)}`);
   }
 
   const data = raw as any;

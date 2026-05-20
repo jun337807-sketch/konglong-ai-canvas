@@ -2582,7 +2582,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     const loadData = async () => {
       const projectData = await canvasProjectPersistence.load(projectId);
       if (projectData) {
-        setNodes(projectData.nodes || []);
+        setNodes(hydrateRuntimeNodeData(projectData.nodes || []));
         setEdges(projectData.edges || []);
         setTimeout(() => setInitialDataLoaded(true), 100);
         return;
@@ -4003,6 +4003,65 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       }]);
     }
   };
+
+  function hydrateRuntimeNodeData(savedNodes: any[]): Node[] {
+    return savedNodes.map((node: any) => {
+      const data = node.data || {};
+
+      if (node.type === 'imageNode') {
+        return {
+          ...node,
+          data: {
+            ...data,
+            projectId,
+            onAction: handleImageAction,
+            onUpload: handleNodeFileUpload,
+            onGenerate: handleOpenGenerate,
+            onChange: handleImageChange,
+            onAddNode: addNode,
+            onOpenAssets: openAssets
+          }
+        };
+      }
+
+      if (node.type === 'videoNode') {
+        return {
+          ...node,
+          data: {
+            ...data,
+            projectId,
+            onUpload: handleNodeFileUpload,
+            onAddNode: addNode,
+            onOpenAssets: openAssets
+          }
+        };
+      }
+
+      if (node.type === 'textNode') {
+        return {
+          ...node,
+          data: {
+            ...data,
+            projectId,
+            onChange: handleTextChange,
+            onAddNode: addNode
+          }
+        };
+      }
+
+      if (node.type === 'aiGenNode') {
+        return {
+          ...node,
+          data: {
+            ...data,
+            onRun: runAIGeneration
+          }
+        };
+      }
+
+      return node;
+    });
+  }
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();

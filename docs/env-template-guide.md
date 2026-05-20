@@ -68,15 +68,20 @@ IMAGE_RESPONSE_FORMAT=b64_json
 IMAGE_MODEL=gpt-image-2
 IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
 IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
+IMAGE_MODEL_KONGLONG_BANANA_2_2K=gemini-3.1-flash-image-preview-2k
+IMAGE_MODEL_KONGLONG_BANANA_2_4K=gemini-3.1-flash-image-preview-4k
 IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
 IMAGE_MODEL_KONGLONG_MJ=mj_imagine
+IMAGE_MJ_API_BASE_URL=https://api.duolapi.cn
+IMAGE_MJ_SUBMIT_PATH=/mj/submit/imagine
+IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch
 ```
 
 前端模型映射：
 - `KONGLONG Image` → `IMAGE_MODEL_KONGLONG_IMAGE`
-- `KONGLONG Banana 2` → `IMAGE_MODEL_KONGLONG_BANANA_2`
+- `KONGLONG Banana 2` → 按清晰度自动选择 `IMAGE_MODEL_KONGLONG_BANANA_2 / IMAGE_MODEL_KONGLONG_BANANA_2_2K / IMAGE_MODEL_KONGLONG_BANANA_2_4K`
 - `KONGLONG Banana pro` → `IMAGE_MODEL_KONGLONG_BANANA_PRO`
-- `KONGLONG MJ` → `IMAGE_MODEL_KONGLONG_MJ`
+- `KONGLONG MJ` → `IMAGE_MODEL_KONGLONG_MJ`，并使用 MidJourney Proxy 协议 `/mj/submit/imagine` + `/mj/task/{taskId}/fetch`
 
 没有参考图时走 `/v1/images/generations`；有上游参考图时走 `/v1/images/edits`。
 
@@ -135,8 +140,13 @@ IMAGE_RESPONSE_FORMAT=b64_json
 IMAGE_MODEL=gpt-image-2
 IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
 IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
+IMAGE_MODEL_KONGLONG_BANANA_2_2K=gemini-3.1-flash-image-preview-2k
+IMAGE_MODEL_KONGLONG_BANANA_2_4K=gemini-3.1-flash-image-preview-4k
 IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
 IMAGE_MODEL_KONGLONG_MJ=mj_imagine
+IMAGE_MJ_API_BASE_URL=https://api.duolapi.cn
+IMAGE_MJ_SUBMIT_PATH=/mj/submit/imagine
+IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch
 
 VIDEO_PROVIDER=mjapi-monthly
 VIDEO_API_BASE_URL=https://api.mjapi.cc.cd
