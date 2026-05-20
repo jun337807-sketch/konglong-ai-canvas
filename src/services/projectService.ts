@@ -19,7 +19,7 @@ class ProjectService {
   async createProject(projectData: Partial<WorkspaceProject> & { group_id: string }): Promise<WorkspaceProject> {
     const projects = db.getProjects();
     const newProject: WorkspaceProject = {
-      project_id: `proj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      project_id: projectData.project_id || `proj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       group_id: projectData.group_id,
       project_name: projectData.project_name || 'New Project',
       project_type: projectData.project_type || 'canvas',

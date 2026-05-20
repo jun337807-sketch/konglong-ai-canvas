@@ -160,7 +160,10 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
   }), [tasks]);
 
   return (
-    <div className="absolute right-5 top-20 bottom-5 w-[520px] bg-[#111214]/95 backdrop-blur-2xl border border-zinc-800/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] z-[250] flex flex-col rounded-3xl overflow-hidden animate-in slide-in-from-right duration-300">
+    <div
+      className="absolute right-5 top-20 bottom-5 w-[520px] bg-[#111214]/95 backdrop-blur-2xl border border-zinc-800/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] z-[250] flex flex-col rounded-3xl overflow-hidden animate-in slide-in-from-right duration-300"
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="relative p-6 border-b border-zinc-800/80 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(0,188,212,0.20),transparent_38%),radial-gradient(circle_at_top_left,rgba(168,85,247,0.12),transparent_32%)] pointer-events-none" />
         <div className="relative flex items-start justify-between gap-4">

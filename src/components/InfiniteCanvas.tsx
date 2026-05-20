@@ -61,6 +61,7 @@ import { canvasHealthCheck } from '../services/canvasHealthCheck';
 import { ActivityPanel } from './ActivityPanel';
 import { canvasProjectPersistence } from '../services/canvasProjectPersistence';
 import { createNodeTypes } from './canvas/createNodeTypes';
+import { workspaceRepository } from '../repositories/workspaceRepository';
 
 // Custom Node Styling Constants
 const selectedBorder = "border-[rgba(255,255,255,0.15)] shadow-[0_0_20px_rgba(255,255,255,0.15)]"; // White soft glow
@@ -328,9 +329,16 @@ const ImageNode = ({ data, id, selected }: any) => {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isPanoramaOpen, setIsPanoramaOpen] = useState(false);
+  const [isAnnotationOpen, setIsAnnotationOpen] = useState(false);
+  const [annotationMode, setAnnotationMode] = useState<'brush' | 'text' | 'mosaic'>('brush');
+  const [annotationColor, setAnnotationColor] = useState('#00e5ff');
+  const [annotationSize, setAnnotationSize] = useState(14);
+  const [isAnnotating, setIsAnnotating] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(data.title || '图片节点');
   const panoramaRef = useRef<CleanPanoramaRef>(null);
+  const annotationCanvasRef = useRef<HTMLCanvasElement>(null);
+  const lastAnnotationPointRef = useRef<{ x: number; y: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -347,6 +355,132 @@ const ImageNode = ({ data, id, selected }: any) => {
         setIsPanoramaOpen(false);
       }
     }
+  };
+
+  const loadImageIntoAnnotationCanvas = useCallback(() => {
+    const canvas = annotationCanvasRef.current;
+    if (!canvas || !data.imageUrl) return;
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const maxWidth = Math.min(window.innerWidth * 0.72, 1100);
+      const maxHeight = Math.min(window.innerHeight * 0.72, 760);
+      const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight, 1);
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    };
+    image.onerror = () => {
+      alert('标注编辑器无法读取当前图片。请先把图片下载后重新上传到画布，再进行标注。');
+      setIsAnnotationOpen(false);
+    };
+    image.src = data.imageUrl;
+  }, [data.imageUrl]);
+
+  React.useEffect(() => {
+    if (isAnnotationOpen) {
+      setTimeout(loadImageIntoAnnotationCanvas, 0);
+    }
+  }, [isAnnotationOpen, loadImageIntoAnnotationCanvas]);
+
+  const getAnnotationPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = annotationCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((e.clientY - rect.top) / rect.height) * canvas.height
+    };
+  };
+
+  const drawAnnotationAt = (point: { x: number; y: number }) => {
+    const canvas = annotationCanvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+
+    if (annotationMode === 'brush') {
+      const last = lastAnnotationPointRef.current || point;
+      ctx.strokeStyle = annotationColor;
+      ctx.lineWidth = annotationSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      lastAnnotationPointRef.current = point;
+      return;
+    }
+
+    if (annotationMode === 'mosaic') {
+      const size = annotationSize * 2.4;
+      const x = Math.max(0, point.x - size / 2);
+      const y = Math.max(0, point.y - size / 2);
+      const w = Math.min(size, canvas.width - x);
+      const h = Math.min(size, canvas.height - y);
+      const patch = document.createElement('canvas');
+      patch.width = Math.max(1, Math.round(w / 8));
+      patch.height = Math.max(1, Math.round(h / 8));
+      const patchCtx = patch.getContext('2d');
+      if (!patchCtx) return;
+      patchCtx.imageSmoothingEnabled = false;
+      patchCtx.drawImage(canvas, x, y, w, h, 0, 0, patch.width, patch.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(patch, 0, 0, patch.width, patch.height, x, y, w, h);
+      ctx.imageSmoothingEnabled = true;
+    }
+  };
+
+  const handleAnnotationPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const point = getAnnotationPoint(e);
+    if (annotationMode === 'text') {
+      const text = window.prompt('请输入标注文字');
+      if (!text) return;
+      const canvas = annotationCanvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!canvas || !ctx) return;
+      ctx.font = `700 ${Math.max(18, annotationSize * 1.6)}px sans-serif`;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillStyle = annotationColor;
+      ctx.strokeText(text, point.x, point.y);
+      ctx.fillText(text, point.x, point.y);
+      return;
+    }
+    setIsAnnotating(true);
+    lastAnnotationPointRef.current = point;
+    drawAnnotationAt(point);
+  };
+
+  const handleAnnotationPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isAnnotating || annotationMode === 'text') return;
+    drawAnnotationAt(getAnnotationPoint(e));
+  };
+
+  const handleAnnotationPointerUp = () => {
+    setIsAnnotating(false);
+    lastAnnotationPointRef.current = null;
+  };
+
+  const saveAnnotationAsNode = () => {
+    const canvas = annotationCanvasRef.current;
+    if (!canvas || !data.onAddNode) return;
+    const currentNode = getNode(id);
+    const position = currentNode
+      ? { x: currentNode.position.x + Number(currentNode.width || currentNode.style?.width || 320) + 90, y: currentNode.position.y }
+      : undefined;
+    data.onAddNode('imageNode', undefined, position, id, {
+      imageUrl: canvas.toDataURL('image/png'),
+      title: `${data.title || '图片'}-标注版`,
+      initialWidth: Math.min(420, canvas.width),
+      initialHeight: Math.round(Math.min(420, canvas.width) * (canvas.height / canvas.width))
+    });
+    setIsAnnotationOpen(false);
   };
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showFormatMenu, setShowFormatMenu] = useState(false);
@@ -406,6 +540,14 @@ const ImageNode = ({ data, id, selected }: any) => {
         setIsPanoramaOpen(true);
       } else {
         alert("请先生成图片");
+      }
+      return;
+    }
+    if (action === 'annotate') {
+      if (data.imageUrl) {
+        setIsAnnotationOpen(true);
+      } else {
+        alert("请先上传或生成图片");
       }
       return;
     }
@@ -1029,6 +1171,67 @@ const ImageNode = ({ data, id, selected }: any) => {
                  // In the future this could add objects to the panorama
                }}
             />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {isAnnotationOpen && data.imageUrl && createPortal(
+        <div className="fixed inset-0 z-[1000] bg-black/88 backdrop-blur-md flex items-center justify-center p-6" onClick={() => setIsAnnotationOpen(false)}>
+          <div className="w-[min(1180px,94vw)] max-h-[92vh] rounded-3xl border border-zinc-800 bg-[#111214]/95 shadow-[0_30px_120px_rgba(0,0,0,0.75)] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800/90 bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950">
+              <div>
+                <div className="text-white font-semibold">图片标注编辑器</div>
+                <div className="text-xs text-zinc-500 mt-0.5">画笔涂抹、文字标注、马赛克处理，保存后会生成新的图片节点。</div>
+              </div>
+              <button onClick={() => setIsAnnotationOpen(false)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-xl transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800/80 bg-[#17181b]">
+              {[
+                { id: 'brush', label: '画笔' },
+                { id: 'text', label: '文字' },
+                { id: 'mosaic', label: '马赛克' }
+              ].map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => setAnnotationMode(item.id as 'brush' | 'text' | 'mosaic')}
+                  className={`px-3 py-1.5 rounded-xl text-xs border transition-all ${annotationMode === item.id ? 'text-white border-[#00bcd4]/50 bg-[#00bcd4]/15 shadow-[0_0_18px_rgba(0,188,212,0.16)]' : 'text-zinc-400 border-zinc-800 hover:text-white hover:bg-zinc-800'}`}
+                >
+                  {item.label}
+                </button>
+              ))}
+              <div className="w-px h-6 bg-zinc-800 mx-1" />
+              <label className="flex items-center gap-2 text-xs text-zinc-400">
+                颜色
+                <input type="color" value={annotationColor} onChange={(e) => setAnnotationColor(e.target.value)} className="w-8 h-8 bg-transparent rounded cursor-pointer" />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-400 min-w-[180px]">
+                尺寸
+                <input type="range" min={4} max={42} value={annotationSize} onChange={(e) => setAnnotationSize(Number(e.target.value))} className="flex-1 accent-[#00bcd4]" />
+                <span className="w-7 text-right text-zinc-300">{annotationSize}</span>
+              </label>
+              <button onClick={loadImageIntoAnnotationCanvas} className="ml-auto px-3 py-1.5 rounded-xl text-xs text-zinc-300 border border-zinc-800 hover:bg-zinc-800 hover:text-white transition-colors">
+                重置
+              </button>
+              <button onClick={saveAnnotationAsNode} className="px-4 py-1.5 rounded-xl text-xs font-semibold text-black bg-[#00e5ff] hover:bg-white transition-colors shadow-[0_0_24px_rgba(0,229,255,0.22)]">
+                保存为新节点
+              </button>
+            </div>
+
+            <div className="flex-1 min-h-0 p-5 overflow-auto bg-[radial-gradient(circle_at_center,rgba(0,188,212,0.08),transparent_34%),#0b0c0f] flex items-center justify-center">
+              <canvas
+                ref={annotationCanvasRef}
+                className="max-w-full max-h-[72vh] rounded-2xl shadow-2xl border border-zinc-800 bg-zinc-950 cursor-crosshair touch-none"
+                onPointerDown={handleAnnotationPointerDown}
+                onPointerMove={handleAnnotationPointerMove}
+                onPointerUp={handleAnnotationPointerUp}
+                onPointerCancel={handleAnnotationPointerUp}
+                onPointerLeave={handleAnnotationPointerUp}
+              />
+            </div>
           </div>
         </div>,
         document.body
@@ -2312,7 +2515,7 @@ const edgeTypes = {
   animated: AnimatedEdge,
 };
 
-function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, currentUser }: { projectId: string; projectName: string; groupId: string; groupName: string; onBackToProjects: () => void; currentUser?: string }) {
+function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, currentUser, onProjectRenamed }: { projectId: string; projectName: string; groupId: string; groupName: string; onBackToProjects: () => void; currentUser?: string; onProjectRenamed?: (name: string) => void }) {
   const navigate = useNavigate();
   const { getNode, getNodes, getEdges, fitView, screenToFlowPosition, getViewport } = useReactFlow();
   const [nodes, setNodes, onNodesChangeOriginal] = useNodesState([]);
@@ -2357,6 +2560,11 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
   const [entityCategoryMenuId, setEntityCategoryMenuId] = useState<string | null>(null);
   const [activeRightPanel, setActiveRightPanel] = useState<{ type: MediaCapability, nodeId: string, initialValues?: Record<string, any> } | null>(null);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
+  const [currentProjectName, setCurrentProjectName] = useState(projectName);
+
+  React.useEffect(() => {
+    setCurrentProjectName(projectName);
+  }, [projectName]);
 
   React.useEffect(() => {
     const closeFloatingMenus = () => {
@@ -2377,11 +2585,11 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
 
     const currentNodes = Array.isArray(arg1) ? arg1 : nodes;
     const currentEdges = Array.isArray(arg2) ? arg2 : edges;
-    await canvasProjectPersistence.save(projectId, projectName, {
+    await canvasProjectPersistence.save(projectId, currentProjectName, {
       nodes: currentNodes,
       edges: currentEdges
     });
-  }, [nodes, edges, projectId, projectName, initialDataLoaded]);
+  }, [nodes, edges, projectId, currentProjectName, initialDataLoaded]);
 
   const [settings, setSettings] = useState<any>(null);
 
@@ -2420,6 +2628,19 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     // Deprecated for direct manual load, handled by initial effect
     showToast('项目已自动加载');
   }, [showToast]);
+
+  const handleProjectSettingsSaved = useCallback(async (nextSettings: any) => {
+    setSettings(nextSettings);
+    const nextName = String(nextSettings?.project?.name || '').trim();
+    if (!nextName) return;
+    setCurrentProjectName(nextName);
+    onProjectRenamed?.(nextName);
+    try {
+      await workspaceRepository.renameProject(projectId, nextName);
+    } catch (err) {
+      console.warn('Failed to sync project name to repository', err);
+    }
+  }, [projectId, onProjectRenamed]);
 
   const handleNewProject = useCallback(() => {
     // Let's redirect back to projects instead
@@ -4048,7 +4269,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       {/* Floating Top Toolbar */}
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[100] bg-[#111214]/80 backdrop-blur-xl border border-zinc-800/80 rounded-2xl shadow-lg flex items-center p-1.5 gap-1">
         <button onClick={() => setShowProjectSettings(true)} className="px-3 py-1.5 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors">
-          {settings?.project?.name || projectName || '未命名项目'}
+          {settings?.project?.name || currentProjectName || '未命名项目'}
         </button>
         <div className="w-px h-5 bg-zinc-800 mx-1"></div>
         <button onClick={() => fitView({ duration: 800 })} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="居中对齐">
@@ -4975,9 +5196,13 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
   setEdges(state.edges);
   showToast('已恢复至历史版本');
 }} />}
-{showProjectSettings && <ProjectSettingsPanel projectId={projectId} onClose={() => setShowProjectSettings(false)} />}
+{showProjectSettings && <ProjectSettingsPanel projectId={projectId} onClose={() => setShowProjectSettings(false)} onSaved={handleProjectSettingsSaved} />}
 {showAssetLibrary && <AssetLibrary projectId={projectId} onClose={() => setShowAssetLibrary(false)} />}
-{showTaskQueue && <TaskQueuePanel projectId={projectId} onClose={() => setShowTaskQueue(false)} />}
+      {showTaskQueue && (
+        <div className="absolute inset-0 z-[240]" onClick={() => setShowTaskQueue(false)}>
+          <TaskQueuePanel projectId={projectId} onClose={() => setShowTaskQueue(false)} />
+        </div>
+      )}
 {showActivityPanel && <ActivityPanel projectId={projectId} onClose={() => setShowActivityPanel(false)} />}
 {showPromptTemplates && <PromptTemplatePanel onSelect={(t) => showToast('已选择模板: ' + t.slice(0, 10) + '...')} onClose={() => setShowPromptTemplates(false)} />}
       {/* Right Properties Panel */}
@@ -5228,7 +5453,7 @@ export default function InfiniteCanvasWrapper({ onClose, renderTopRight, current
         )}
       </div>
       <ReactFlowProvider>
-        <Canvas projectId={selectedProject.id} projectName={selectedProject.name} groupId={selectedGroup.id} groupName={selectedGroup.name} onBackToProjects={() => setSelectedProject(null)} currentUser={currentUser} />
+        <Canvas projectId={selectedProject.id} projectName={selectedProject.name} groupId={selectedGroup.id} groupName={selectedGroup.name} onBackToProjects={() => setSelectedProject(null)} currentUser={currentUser} onProjectRenamed={(name) => setSelectedProject(prev => prev ? { ...prev, name } : prev)} />
       </ReactFlowProvider>
     </div>
   );

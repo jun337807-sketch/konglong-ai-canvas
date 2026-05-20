@@ -6,9 +6,10 @@ import { projectSettingsService } from '../services/projectSettingsService';
 interface ProjectSettingsPanelProps {
   projectId: string;
   onClose: () => void;
+  onSaved?: (settings: ProjectSettings) => void;
 }
 
-export function ProjectSettingsPanel({ projectId, onClose }: ProjectSettingsPanelProps) {
+export function ProjectSettingsPanel({ projectId, onClose, onSaved }: ProjectSettingsPanelProps) {
   const [settings, setSettings] = useState<ProjectSettings | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -22,6 +23,7 @@ export function ProjectSettingsPanel({ projectId, onClose }: ProjectSettingsPane
     setSaving(true);
     await projectSettingsService.saveSettings(projectId, settings);
     setSaving(false);
+    onSaved?.(settings);
     onClose();
   };
 
