@@ -35,7 +35,7 @@ import {
   Play, Maximize, Download, Sun, SplitSquareHorizontal, 
   Move3D, Eye, Sparkles, Focus, RotateCw, BookMarked, 
   Copy, CopyPlus, ClipboardPaste, Trash2, BoxSelect, Settings, HelpCircle,
-  Plus, Share2, Shapes, Clock, Headphones, AlignLeft, Image as ImageIcon, Video, Scissors, AudioLines, FileText, Upload, Box, MapPin, Monitor, Camera, Maximize2, Minimize2, Languages, Settings2, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, User, RefreshCw, CheckCircle, Loader2, Briefcase, List, ListTodo
+  Plus, Share2, Shapes, Clock, Headphones, AlignLeft, Image as ImageIcon, Video, Scissors, AudioLines, FileText, Upload, Box, MapPin, Monitor, Camera, Maximize2, Minimize2, Languages, Settings2, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, User, RefreshCw, CheckCircle, Loader2, Briefcase, List, ListTodo, Save
 } from 'lucide-react';
 import { useCanvasHistory } from '../hooks/useCanvasHistory';
 import { HistoryPanel } from './HistoryPanel';
@@ -66,10 +66,18 @@ import { createNodeTypes } from './canvas/createNodeTypes';
 const selectedBorder = "border-[rgba(255,255,255,0.15)] shadow-[0_0_20px_rgba(255,255,255,0.15)]"; // White soft glow
 const defaultBorder = "border-zinc-800/80";
 const nodeBg = "bg-[#111214]/90 backdrop-blur-md";
-const handleStyle = "!w-5 !h-5 !min-w-[20px] !min-h-[20px] !absolute !top-1/2 !-translate-y-1/2 !bg-transparent !border-transparent hover:!bg-[#00bcd4] hover:!border-[#00bcd4] hover:!scale-125 hover:shadow-[0_0_12px_rgba(0,188,212,0.8)] transition-all duration-200 cursor-crosshair z-50 rounded-full";
+const handleStyle = "!w-5 !h-5 !min-w-[20px] !min-h-[20px] !absolute !top-1/2 !-translate-y-1/2 !bg-transparent !border-transparent !opacity-0 transition-all duration-200 cursor-crosshair z-50 rounded-full";
 const plusHandleStyle = "!relative !right-auto !top-auto !translate-y-0 !w-8 !h-8 !min-w-[32px] !min-h-[32px] !bg-[#2A2A2A] !border !border-zinc-600 !rounded-full !opacity-100 flex items-center justify-center text-zinc-300 hover:!bg-zinc-700 hover:!border-[#00bcd4] hover:text-white hover:!scale-110 hover:shadow-[0_0_16px_rgba(0,188,212,0.55)] transition-all duration-200 cursor-crosshair z-50";
 const resizerHandleStyle = "w-2 h-2 bg-white/50 rounded-sm border-none shadow-[0_0_4px_rgba(255,255,255,0.3)]";
 const entityCategories = ['人物', '场景', '道具', '特效', '其他'];
+
+const FloatingPlusHandle = ({ type, position, title }: { type: 'source' | 'target'; position: Position; title?: string }) => (
+  <div className={`absolute top-1/2 -translate-y-1/2 ${position === Position.Left ? '-left-11' : '-right-11'} z-40 opacity-0 group-hover:opacity-100 transition-opacity`}>
+    <Handle type={type} position={position} className={plusHandleStyle} title={title || '按住拖拽连接'}>
+      <Plus size={14} />
+    </Handle>
+  </div>
+);
 
 function inferEntityCategory(input?: string) {
   const text = (input || '').toLowerCase();
@@ -133,7 +141,7 @@ const TextNode = ({ data, id, selected }: any) => {
              <div className={`text-sm font-medium animate-pulse ${data.generatingText?.includes('审查') ? 'text-rose-500' : 'text-[#00bcd4]'}`}>{data.generatingText || '处理中...'}</div>
           </div>
         )}
-        <Handle type="target" position={Position.Left} className={handleStyle} />
+        <FloatingPlusHandle type="target" position={Position.Left} title="拖入连接到文本节点" />
         <div className="flex items-center gap-2 mb-3 text-zinc-400 pb-2 border-b border-zinc-800/50">
           <Type size={14} className={selected ? "text-[#00bcd4]" : ""} />
           <span className="text-xs font-semibold tracking-wide flex-1">文本 / 剧本</span>
@@ -306,7 +314,7 @@ const TextNode = ({ data, id, selected }: any) => {
             </>
           )}
         </div>
-        <Handle type="source" position={Position.Right} className={handleStyle} />
+        <FloatingPlusHandle type="source" position={Position.Right} title="从文本节点拖出连接" />
       </div>
     </>
   );
@@ -531,7 +539,7 @@ const ImageNode = ({ data, id, selected }: any) => {
       
       <div className={`${nodeBg} border-[1.5px] ${selected ? selectedBorder : defaultBorder} rounded-2xl p-0 shadow-sm hover:shadow-[0_0_15px_rgba(0,188,212,0.15)] transition-shadow w-full h-full flex flex-col relative group`}>
         
-        <Handle type="target" position={Position.Left} className={handleStyle} />
+        <FloatingPlusHandle type="target" position={Position.Left} title="拖入连接到图片节点" />
         
         {/* Thumbnails outside top-left */}
         {data.thumbnails && data.thumbnails.length > 0 && (
@@ -553,7 +561,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         )}
         
         {/* Right '+' Connection Handle: click opens quick add, drag creates edge */}
-        <div className="absolute top-1/2 -translate-y-1/2 -right-11 z-40 opacity-100 transition-opacity">
+        <div className={`absolute top-1/2 -translate-y-1/2 -right-11 z-40 transition-opacity ${showAddMenu ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
            <Handle
              type="source"
              position={Position.Right}
@@ -1153,11 +1161,24 @@ const VideoNode = ({ data, id, selected }: any) => {
     e.stopPropagation();
     if (!prompt.trim()) return alert("请输入提示词");
     
+    const queueProjectId = data.projectId || 'local-project';
+    let queueTaskId: string | null = null;
     setLoading(true);
     setProgressMsg("正在连接视频生成服务...");
     updateNodeData(id, { isGenerating: true, progressMsg: "正在连接视频生成服务...", activeTab });
     
     try {
+      const queueTask = await taskQueueManager.enqueueTask(queueProjectId, 'video_generation', {
+        prompt,
+        ratio: aspectRatio,
+        duration,
+        resolution,
+        model: videoModel,
+        activeTab
+      }, id);
+      queueTaskId = queueTask.id;
+      await taskQueueManager.updateTaskStatus(queueProjectId, queueTask.id, 'running');
+
       // 收集所有连入当前视频节点的图片/视频，作为“全能参考”素材。
       const edges = getEdges();
       const nodes = getNodes();
@@ -1210,11 +1231,17 @@ const VideoNode = ({ data, id, selected }: any) => {
       setLoading(false);
       setProgressMsg("");
       updateNodeData(id, { videoUrl: finalVideoUrl, isGenerating: false, progressMsg: "", prompt, activeTab, aspectRatio, resolution, duration, audioEnabled, videoModel });
+      if (queueTaskId) {
+        await taskQueueManager.updateTaskStatus(queueProjectId, queueTaskId, 'completed', { url: finalVideoUrl });
+      }
     } catch (err: any) {
       alert("视频生成失败：" + err.message);
       setLoading(false);
       setProgressMsg("");
       updateNodeData(id, { isGenerating: false, progressMsg: "" });
+      if (queueTaskId) {
+        await taskQueueManager.updateTaskStatus(queueProjectId, queueTaskId, 'failed', undefined, err?.message || '未知错误');
+      }
     }
   };
 
@@ -1316,13 +1343,13 @@ const VideoNode = ({ data, id, selected }: any) => {
         )}
       </div>
 
-      <div className={`${nodeBg} border-[1.5px] ${selected ? selectedBorder : defaultBorder} rounded-2xl p-0 shadow-sm hover:shadow-[0_0_15px_rgba(0,188,212,0.15)] transition-shadow w-full h-full flex flex-col relative pointer-events-auto`}>
-        <Handle type="target" position={Position.Left} className={handleStyle} />
+      <div className={`${nodeBg} border-[1.5px] ${selected ? selectedBorder : defaultBorder} rounded-2xl p-0 shadow-sm hover:shadow-[0_0_15px_rgba(0,188,212,0.15)] transition-shadow w-full h-full flex flex-col relative pointer-events-auto group`}>
+        <FloatingPlusHandle type="target" position={Position.Left} title="拖入连接到视频节点" />
         
         
 
         {/* Media Area */}
-        <Handle type="source" position={Position.Right} className={handleStyle} />
+        <FloatingPlusHandle type="source" position={Position.Right} title="从视频节点拖出连接" />
         <div className="flex-1 m-1 rounded-2xl overflow-hidden bg-[#1E1E1E] flex flex-col justify-center relative min-h-0">
             {loading ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center bg-zinc-900/80 backdrop-blur-sm z-10">
@@ -2424,7 +2451,19 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       )));
     };
 
+    let queueTaskId: string | null = null;
+
     try {
+      const queueTask = await taskQueueManager.enqueueTask(projectId, 'image_generation', {
+        prompt,
+        aspectRatio: options?.aspectRatio || '16:9',
+        resolution: options?.resolution || '2K',
+        uiModel: options?.uiModel,
+        referenceImages: upstreamImageUrls
+      }, nodeId);
+      queueTaskId = queueTask.id;
+      await taskQueueManager.updateTaskStatus(projectId, queueTask.id, 'running');
+
       patchNodeData({
         isGenerating: true,
         progress: 8,
@@ -2457,9 +2496,15 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         stylePreset: options?.stylePreset,
         uiModel: options?.uiModel
       });
+      if (queueTaskId) {
+        await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'completed', { url: imageUrl });
+      }
       showToast(upstreamImageUrls.length > 0 ? '参考图生成完成' : '图片生成完成');
     } catch (err: any) {
       patchNodeData({ isGenerating: false, progress: 0, progressMsg: '' });
+      if (queueTaskId) {
+        await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'failed', undefined, err?.message || '未知错误');
+      }
       showToast(`图片生成失败：${err?.message || '未知错误'}`);
     }
   }, [getNodes, getEdges, setNodes, projectId, currentUser, showToast]);
@@ -2549,6 +2594,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         data: {
           imageUrl,
           title,
+          projectId,
           prompt: node.data.prompt || '',
           onAction: handleImageAction,
           onUpload: handleNodeFileUpload,
@@ -2654,7 +2700,18 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     if (!config) return;
 
     const runDerivative = async () => {
+      let queueTaskId: string | null = null;
       try {
+        const queueTask = await taskQueueManager.enqueueTask(projectId, 'image_generation', {
+          prompt: config.prompt,
+          title: config.title,
+          aspectRatio: config.ratio || '16:9',
+          resolution: config.resolution || '4K',
+          sourceNodeId: id
+        }, id);
+        queueTaskId = queueTask.id;
+        await taskQueueManager.updateTaskStatus(projectId, queueTask.id, 'running');
+
         updateNodeData(id, 'isGenerating', true);
         updateNodeData(id, 'progressMsg', `正在生成${config.title}...`);
         const imageUrl = await runImageGeneration(
@@ -2671,9 +2728,15 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           }
         );
         addDerivedImageNode(String(imageUrl), config.title);
+        if (queueTaskId) {
+          await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'completed', { url: imageUrl });
+        }
         showToast(`${config.title}生成完成`);
       } catch (err: any) {
         console.error(err);
+        if (queueTaskId) {
+          await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'failed', undefined, err?.message || '未知错误');
+        }
         showToast(`${config.title}生成失败：${err?.message || '未知错误'}`);
       } finally {
         updateNodeData(id, 'isGenerating', false);
@@ -3674,11 +3737,11 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     let newNode: Node;
     
     if (type === 'textNode') {
-      newNode = { id, type, position, style: { width: 320, height: 180 }, data: { text: '', onChange: handleTextChange, onAddNode: addNode, ...extraParams } };
+      newNode = { id, type, position, style: { width: 320, height: 180 }, data: { text: '', projectId, onChange: handleTextChange, onAddNode: addNode, ...extraParams } };
     } else if (type === 'imageNode') {
-      newNode = { id, type, position, style: { width: extraParams?.initialWidth || 320, height: extraParams?.initialHeight || 320 }, data: { imageUrl: '', onAction: handleImageAction, onUpload: handleNodeFileUpload, onGenerate: handleOpenGenerate, onChange: handleImageChange, onAddNode: addNode, onOpenAssets: openAssets, ...extraParams } };
+      newNode = { id, type, position, style: { width: extraParams?.initialWidth || 320, height: extraParams?.initialHeight || 320 }, data: { imageUrl: '', projectId, onAction: handleImageAction, onUpload: handleNodeFileUpload, onGenerate: handleOpenGenerate, onChange: handleImageChange, onAddNode: addNode, onOpenAssets: openAssets, ...extraParams } };
     } else if (type === 'videoNode') {
-      newNode = { id, type, position, style: { width: extraParams?.initialWidth || 320, height: extraParams?.initialHeight || 320 }, data: { videoUrl: '', onUpload: handleNodeFileUpload, onAddNode: addNode, onOpenAssets: openAssets, ...extraParams } };
+      newNode = { id, type, position, style: { width: extraParams?.initialWidth || 320, height: extraParams?.initialHeight || 320 }, data: { videoUrl: '', projectId, onUpload: handleNodeFileUpload, onAddNode: addNode, onOpenAssets: openAssets, ...extraParams } };
     } else if (type === 'audioNode') {
       newNode = { id, type, position, style: { width: 320, height: 140 }, data: { audioUrl: '', onUpload: handleNodeFileUpload, onAddNode: addNode, ...extraParams } };
     } else if (type === 'scriptNode') {
@@ -3990,6 +4053,16 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         <div className="w-px h-5 bg-zinc-800 mx-1"></div>
         <button onClick={() => fitView({ duration: 800 })} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="居中对齐">
           <Eye size={16} />
+        </button>
+        <button
+          onClick={async () => {
+            await handleSaveProject(nodes, edges);
+            showToast('项目已手动保存');
+          }}
+          className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip"
+          title="手动保存"
+        >
+          <Save size={16} />
         </button>
         <button onClick={() => setShowTaskQueue(true)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-xl transition-colors tooltip" title="查看任务队列">
           <ListTodo size={16} />

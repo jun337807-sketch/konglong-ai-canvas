@@ -123,13 +123,14 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
   useEffect(() => {
     const loadTasks = async () => {
       try {
-        const [serverRes, localTasks] = await Promise.all([
+        const [serverRes, localTasks, legacyLocalTasks] = await Promise.all([
           fetch(`/api/workspace-projects/${projectId}/tasks`).then(r => r.json()).catch(() => null),
-          taskQueueManager.getTasks(projectId)
+          taskQueueManager.getTasks(projectId),
+          projectId === 'local-project' ? Promise.resolve([]) : taskQueueManager.getTasks('local-project')
         ]);
 
         const serverTasks = serverRes?.success ? (serverRes.tasks || []).map(normalizeServerTask) : [];
-        const localQueueTasks = localTasks.map(normalizeLocalTask);
+        const localQueueTasks = [...localTasks, ...legacyLocalTasks].map(normalizeLocalTask);
         const seen = new Set<string>();
         const merged = [...serverTasks, ...localQueueTasks]
           .filter(task => {
