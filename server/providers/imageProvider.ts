@@ -37,6 +37,10 @@ function getMjTaskPath(taskId: string) {
   return template.replace('{taskId}', encodeURIComponent(taskId));
 }
 
+function getMjProtocol() {
+  return (process.env.IMAGE_MJ_PROTOCOL || 'openai-compatible').trim().toLowerCase();
+}
+
 function normalizeUiModel(value?: string) {
   return (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -86,11 +90,47 @@ function isMjImageInput(input: ImageGenerationInput) {
   return uiModel.includes('konglong mj') || explicitModel === 'mj_imagine' || resolveImageModel(input) === 'mj_imagine';
 }
 
+function resolveImageApiKey(input: ImageGenerationInput) {
+  const uiModel = normalizeUiModel(input.uiModel || String(input.metadata?.uiModel || ''));
+  const resolution = (input.resolution || '').trim().toUpperCase();
+
+  if (uiModel.includes('banana pro')) {
+    return process.env.IMAGE_API_KEY_KONGLONG_BANANA_PRO || requireEnv('IMAGE_API_KEY');
+  }
+
+  if (uiModel.includes('banana 2') || uiModel.includes('banan 2')) {
+    if (resolution === '4K') {
+      return process.env.IMAGE_API_KEY_KONGLONG_BANANA_2_4K
+        || process.env.IMAGE_API_KEY_KONGLONG_BANANA_2
+        || requireEnv('IMAGE_API_KEY');
+    }
+    if (resolution === '2K') {
+      return process.env.IMAGE_API_KEY_KONGLONG_BANANA_2_2K
+        || process.env.IMAGE_API_KEY_KONGLONG_BANANA_2
+        || requireEnv('IMAGE_API_KEY');
+    }
+    return process.env.IMAGE_API_KEY_KONGLONG_BANANA_2 || requireEnv('IMAGE_API_KEY');
+  }
+
+  if (uiModel.includes('konglong mj')) {
+    return process.env.IMAGE_API_KEY_KONGLONG_MJ || requireEnv('IMAGE_API_KEY');
+  }
+
+  if (uiModel.includes('konglong image')) {
+    return process.env.IMAGE_API_KEY_KONGLONG_IMAGE || requireEnv('IMAGE_API_KEY');
+  }
+
+  return requireEnv('IMAGE_API_KEY');
+}
+
 function resolveImageSize(aspectRatio = '1:1', resolution = '1K'): ImageSize {
   const maxDimByResolution: Record<string, number> = {
     '1K': 1024,
     '2K': 2048,
-    '4K': 4096,
+    // duolapi / gpt-image compatible routes reject sizes whose longest edge is
+    // greater than 3840. Keep the UI label as 4K, but request the provider-safe
+    // maximum to avoid "Invalid size" errors.
+    '4K': Number(process.env.IMAGE_MAX_EDGE_PIXELS || 3840),
     '720P': 1280,
     '1080P': 1920
   };
@@ -276,39 +316,39 @@ function buildImageEditFormData(input: ImageGenerationInput) {
   return formData;
 }
 
-async function requestJson(endpoint: string, body: Record<string, unknown>) {
+async function requestJson(endpoint: string, body: Record<string, unknown>, apiKey = requireEnv('IMAGE_API_KEY')) {
   return fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${requireEnv('IMAGE_API_KEY')}`
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify(body)
   });
 }
 
-async function requestMultipart(endpoint: string, body: FormData) {
+async function requestMultipart(endpoint: string, body: FormData, apiKey = requireEnv('IMAGE_API_KEY')) {
   return fetch(endpoint, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${requireEnv('IMAGE_API_KEY')}`
+      Authorization: `Bearer ${apiKey}`
     },
     body
   });
 }
 
-async function requestMjJson(endpoint: string, body: Record<string, unknown>) {
+async function requestMjJson(endpoint: string, body: Record<string, unknown>, apiKey = requireEnv('IMAGE_API_KEY')) {
   return fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${requireEnv('IMAGE_API_KEY')}`
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify(body)
   });
 }
 
-async function queryMjTask(baseUrl: string, taskId: string) {
+async function queryMjTask(baseUrl: string, taskId: string, apiKey = requireEnv('IMAGE_API_KEY')) {
   const primaryPath = getMjTaskPath(taskId);
   const fallbackPath = `/mj/task/${encodeURIComponent(taskId)}`;
   const paths = primaryPath === fallbackPath ? [primaryPath] : [primaryPath, fallbackPath];
@@ -317,7 +357,7 @@ async function queryMjTask(baseUrl: string, taskId: string) {
   for (const path of paths) {
     const endpoint = `${baseUrl}${path}`;
     const response = await fetch(endpoint, {
-      headers: { Authorization: `Bearer ${requireEnv('IMAGE_API_KEY')}` }
+      headers: { Authorization: `Bearer ${apiKey}` }
     });
     const body = await response.json().catch(async () => ({ text: await response.text() }));
 
@@ -339,6 +379,7 @@ async function submitMjImagineGeneration(input: ImageGenerationInput): Promise<P
   const provider = input.provider || process.env.IMAGE_PROVIDER || 'mj-proxy';
   const submitEndpoint = `${baseUrl}${getMjSubmitPath()}`;
   const prompt = buildMjPrompt(input.prompt, input.aspectRatio);
+  const apiKey = resolveImageApiKey(input);
 
   const submitResponse = await requestMjJson(submitEndpoint, {
     prompt,
@@ -347,7 +388,7 @@ async function submitMjImagineGeneration(input: ImageGenerationInput): Promise<P
       aspectRatio: input.aspectRatio,
       resolution: input.resolution
     })
-  });
+  }, apiKey);
   const submitRaw = await submitResponse.json().catch(async () => ({ text: await submitResponse.text() }));
   if (!submitResponse.ok) {
     throw new Error(`MJ submit failed (${submitResponse.status}) endpoint=${submitEndpoint}: ${JSON.stringify(submitRaw)}`);
@@ -366,7 +407,7 @@ async function submitMjImagineGeneration(input: ImageGenerationInput): Promise<P
 
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, intervalMs));
-    const { body: task, endpoint: queryEndpoint } = await queryMjTask(baseUrl, taskId);
+    const { body: task, endpoint: queryEndpoint } = await queryMjTask(baseUrl, taskId, apiKey);
     lastTask = task;
 
     if (task.status === 'SUCCESS' && task.imageUrl) {
@@ -409,7 +450,7 @@ async function submitMjImagineGeneration(input: ImageGenerationInput): Promise<P
 }
 
 export async function submitImageGeneration(input: ImageGenerationInput): Promise<ProviderTaskResult> {
-  if (isMjImageInput(input)) {
+  if (isMjImageInput(input) && getMjProtocol() === 'mj-proxy') {
     return submitMjImagineGeneration(input);
   }
 
@@ -419,10 +460,11 @@ export async function submitImageGeneration(input: ImageGenerationInput): Promis
   const hasDataUrlReferences = referenceImages.some(isDataImageUrl);
   const endpoint = `${getImageApiBaseUrl()}${hasReferenceImages ? getImageEditPath() : getImageSubmitPath()}`;
   const body = hasReferenceImages ? buildImageEditJsonBody(input) : buildOpenAICompatibleBody(input);
+  const apiKey = resolveImageApiKey(input);
 
   const response = hasReferenceImages && hasDataUrlReferences
-    ? await requestMultipart(endpoint, buildImageEditFormData(input))
-    : await requestJson(endpoint, body);
+    ? await requestMultipart(endpoint, buildImageEditFormData(input), apiKey)
+    : await requestJson(endpoint, body, apiKey);
 
   const raw = await response.json().catch(async () => ({ text: await response.text() }));
   if (!response.ok) {

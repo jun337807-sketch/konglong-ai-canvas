@@ -173,6 +173,32 @@ router.post('/generation/image', async (req, res) => {
     payload: req.body || {}
   });
 
+  if (task) {
+    updateGenerationTask({ taskId: task.id });
+
+    void (async () => {
+      try {
+        const result = await submitImageGeneration(req.body);
+        const updatedTask = updateGenerationTask({ taskId: task.id, result });
+        await createAssetFromGeneration({ type: 'image', result, context, taskId: task.id });
+        console.info('Async image generation completed:', { taskId: task.id, status: updatedTask?.status });
+      } catch (err: any) {
+        const updatedTask = updateGenerationTask({ taskId: task.id, errorMessage: err.message });
+        console.error('Async image generation error:', { taskId: task.id, status: updatedTask?.status, error: err.message });
+      }
+    })();
+
+    return res.status(202).json({
+      success: true,
+      result: {
+        provider: provider || process.env.IMAGE_PROVIDER || 'external-image',
+        providerTaskId: task.id,
+        status: 'submitted'
+      },
+      task: findTaskById(task.id) || task
+    });
+  }
+
   try {
     const result = await submitImageGeneration(req.body);
     const updatedTask = updateGenerationTask({ taskId: task?.id, result });

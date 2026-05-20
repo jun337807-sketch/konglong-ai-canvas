@@ -62,9 +62,16 @@ VIDEO_REFERENCE_INGEST_TO_TOS=true
 IMAGE_PROVIDER=openai-compatible
 IMAGE_API_BASE_URL=https://api.duolapi.cn
 IMAGE_API_KEY=你的图片生成API Key
+IMAGE_API_KEY_KONGLONG_IMAGE=可选：挂载 gpt-image 分组的令牌
+IMAGE_API_KEY_KONGLONG_BANANA_2=可选：挂载 Banana/Gemini 分组的令牌
+IMAGE_API_KEY_KONGLONG_BANANA_2_2K=可选：挂载 Banana/Gemini 2K 分组的令牌
+IMAGE_API_KEY_KONGLONG_BANANA_2_4K=可选：挂载 Banana/Gemini 4K 分组的令牌
+IMAGE_API_KEY_KONGLONG_BANANA_PRO=可选：挂载 Banana Pro 分组的令牌
+IMAGE_API_KEY_KONGLONG_MJ=可选：挂载 MJ 分组的令牌
 IMAGE_API_SUBMIT_PATH=/v1/images/generations
 IMAGE_API_EDIT_PATH=/v1/images/edits
 IMAGE_RESPONSE_FORMAT=b64_json
+IMAGE_MAX_EDGE_PIXELS=3840
 IMAGE_MODEL=gpt-image-2
 IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
 IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
@@ -72,6 +79,7 @@ IMAGE_MODEL_KONGLONG_BANANA_2_2K=gemini-3.1-flash-image-preview-2k
 IMAGE_MODEL_KONGLONG_BANANA_2_4K=gemini-3.1-flash-image-preview-4k
 IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
 IMAGE_MODEL_KONGLONG_MJ=mj_imagine
+IMAGE_MJ_PROTOCOL=openai-compatible
 IMAGE_MJ_API_BASE_URL=https://api.duolapi.cn
 IMAGE_MJ_SUBMIT_PATH=/mj/submit/imagine
 IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch
@@ -81,9 +89,22 @@ IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch
 - `KONGLONG Image` → `IMAGE_MODEL_KONGLONG_IMAGE`
 - `KONGLONG Banana 2` → 按清晰度自动选择 `IMAGE_MODEL_KONGLONG_BANANA_2 / IMAGE_MODEL_KONGLONG_BANANA_2_2K / IMAGE_MODEL_KONGLONG_BANANA_2_4K`
 - `KONGLONG Banana pro` → `IMAGE_MODEL_KONGLONG_BANANA_PRO`
-- `KONGLONG MJ` → `IMAGE_MODEL_KONGLONG_MJ`，并使用 MidJourney Proxy 协议 `/mj/submit/imagine` + `/mj/task/{taskId}/fetch`
+- `KONGLONG MJ` → `IMAGE_MODEL_KONGLONG_MJ`；默认作为 duolapi 图片分组模型走 `/v1/images/generations`
 
 没有参考图时走 `/v1/images/generations`；有上游参考图时走 `/v1/images/edits`。
+
+`IMAGE_MAX_EDGE_PIXELS=3840` 用于兼容 duolapi / gpt-image 对图片尺寸的限制：前端仍然显示 `4K`，但后端会把 `16:9 · 4K` 转成 `3840x2160`，避免服务商返回“最长边必须小于或等于 3840”。
+
+如果 duolapi 的模型分组是绑定在令牌上的，不要依赖请求参数切换分组；直接给每个前端模型配置独立令牌：
+
+```bash
+IMAGE_API_KEY_KONGLONG_IMAGE=挂载 gpt-image 分组的令牌
+IMAGE_API_KEY_KONGLONG_BANANA_2=挂载 Banana/Gemini 分组的令牌
+IMAGE_API_KEY_KONGLONG_BANANA_PRO=挂载 Banana Pro 分组的令牌
+IMAGE_API_KEY_KONGLONG_MJ=挂载 MJ 分组的令牌
+```
+
+`IMAGE_MJ_PROTOCOL=openai-compatible` 表示 `KONGLONG MJ` 也是 duolapi 图片分组里的普通模型，走 `/v1/images/generations`；只有未来接入独立 MJ Proxy 时，才改成 `IMAGE_MJ_PROTOCOL=mj-proxy`。
 
 ## 视频生成 API
 
@@ -134,9 +155,16 @@ VIDEO_REFERENCE_INGEST_TO_TOS=true
 IMAGE_PROVIDER=openai-compatible
 IMAGE_API_BASE_URL=https://api.duolapi.cn
 IMAGE_API_KEY=你的图片生成API Key
+IMAGE_API_KEY_KONGLONG_IMAGE=
+IMAGE_API_KEY_KONGLONG_BANANA_2=
+IMAGE_API_KEY_KONGLONG_BANANA_2_2K=
+IMAGE_API_KEY_KONGLONG_BANANA_2_4K=
+IMAGE_API_KEY_KONGLONG_BANANA_PRO=
+IMAGE_API_KEY_KONGLONG_MJ=
 IMAGE_API_SUBMIT_PATH=/v1/images/generations
 IMAGE_API_EDIT_PATH=/v1/images/edits
 IMAGE_RESPONSE_FORMAT=b64_json
+IMAGE_MAX_EDGE_PIXELS=3840
 IMAGE_MODEL=gpt-image-2
 IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
 IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
@@ -144,6 +172,7 @@ IMAGE_MODEL_KONGLONG_BANANA_2_2K=gemini-3.1-flash-image-preview-2k
 IMAGE_MODEL_KONGLONG_BANANA_2_4K=gemini-3.1-flash-image-preview-4k
 IMAGE_MODEL_KONGLONG_BANANA_PRO=gemini-3-pro-image-preview
 IMAGE_MODEL_KONGLONG_MJ=mj_imagine
+IMAGE_MJ_PROTOCOL=openai-compatible
 IMAGE_MJ_API_BASE_URL=https://api.duolapi.cn
 IMAGE_MJ_SUBMIT_PATH=/mj/submit/imagine
 IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch

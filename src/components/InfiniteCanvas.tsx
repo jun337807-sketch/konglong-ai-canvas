@@ -73,7 +73,7 @@ const resizerHandleStyle = "w-2 h-2 bg-white/50 rounded-sm border-none shadow-[0
 const entityCategories = ['人物', '场景', '道具', '特效', '其他'];
 
 const FloatingPlusHandle = ({ type, position, title }: { type: 'source' | 'target'; position: Position; title?: string }) => (
-  <div className={`absolute top-0 bottom-0 ${position === Position.Left ? '-left-16' : '-right-16'} w-16 z-40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center`}>
+  <div className={`absolute top-0 bottom-0 ${position === Position.Left ? '-left-10' : '-right-10'} w-10 z-40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center`}>
     <Handle type={type} position={position} className={plusHandleStyle} title={title || '按住拖拽连接'}>
       <Plus size={14} />
     </Handle>
@@ -3126,10 +3126,24 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       }
       case 'duplicate': {
         const newNodeId = `${node.type}-${Date.now()}`;
+        const cleanData = {
+          ...node.data,
+          isGenerating: false,
+          loading: false,
+          progress: 0,
+          progressMsg: '',
+          generationTaskId: undefined,
+          providerTaskId: undefined,
+          error: undefined,
+          errorMessage: undefined
+        };
         const newNode = {
           ...node,
           id: newNodeId,
-          position: { x: node.position.x + 50, y: node.position.y + 50 }
+          selected: false,
+          dragging: false,
+          position: { x: node.position.x + 50, y: node.position.y + 50 },
+          data: cleanData
         };
         setNodes(nds => [...nds, newNode]);
         showToast('已创建副本');
@@ -3139,10 +3153,24 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         if (clipboard) {
           if (clipboard.type === 'node') {
             const newNodeId = `${clipboard.data.type}-${Date.now()}`;
+            const cleanData = {
+              ...clipboard.data.data,
+              isGenerating: false,
+              loading: false,
+              progress: 0,
+              progressMsg: '',
+              generationTaskId: undefined,
+              providerTaskId: undefined,
+              error: undefined,
+              errorMessage: undefined
+            };
             const newNode = {
               ...clipboard.data,
               id: newNodeId,
-              position: { x: node.position.x + 50, y: node.position.y + 50 }
+              selected: false,
+              dragging: false,
+              position: { x: node.position.x + 50, y: node.position.y + 50 },
+              data: cleanData
             };
             setNodes(nds => [...nds, newNode]);
             showToast('已粘贴节点');

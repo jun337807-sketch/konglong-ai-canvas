@@ -28,11 +28,22 @@ type QueueTask = {
   source: 'server' | 'local';
 };
 
+const PAGE_SIZE = 6;
+
+function normalizeTaskStatus(status?: string): QueueTask['status'] {
+  const normalized = String(status || '').toLowerCase();
+  if (['success', 'succeeded', 'completed', 'complete', 'done'].includes(normalized)) return 'completed';
+  if (['fail', 'failed', 'failure', 'error', 'errored'].includes(normalized)) return 'failed';
+  if (['running', 'processing', 'submitted', 'in_progress', 'progress'].includes(normalized)) return 'running';
+  if (['cancel', 'canceled', 'cancelled'].includes(normalized)) return 'canceled';
+  return 'pending';
+}
+
 function normalizeServerTask(task: any): QueueTask {
   return {
     ...task,
     type: task.capability || task.type || 'generation',
-    status: task.status,
+    status: normalizeTaskStatus(task.status),
     error: task.error_message || task.errorMessage || null,
     createdAt: task.created_at,
     updatedAt: task.updated_at,
@@ -43,6 +54,7 @@ function normalizeServerTask(task: any): QueueTask {
 function normalizeLocalTask(task: Task): QueueTask {
   return {
     ...task,
+    status: normalizeTaskStatus(task.status),
     error: task.error || null,
     source: 'local'
   };
@@ -119,6 +131,7 @@ function StatusIcon({ status }: { status: QueueTask['status'] }) {
 export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
   const [tasks, setTasks] = useState<QueueTask[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     const loadTasks = async () => {
@@ -159,6 +172,17 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
     failed: tasks.filter(t => t.status === 'failed').length
   }), [tasks]);
 
+  const pageCount = Math.max(1, Math.ceil(tasks.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const visibleTasks = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return tasks.slice(start, start + PAGE_SIZE);
+  }, [tasks, safePage]);
+
+  useEffect(() => {
+    setPage(current => Math.min(current, Math.max(1, Math.ceil(tasks.length / PAGE_SIZE))));
+  }, [tasks.length]);
+
   return (
     <div
       className="absolute right-5 top-20 bottom-5 w-[520px] bg-[#111214]/95 backdrop-blur-2xl border border-zinc-800/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] z-[250] flex flex-col rounded-3xl overflow-hidden animate-in slide-in-from-right duration-300"
@@ -198,7 +222,7 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 custom-scrollbar">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3 custom-scrollbar">
         {tasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-zinc-500 gap-4">
             <div className="w-20 h-20 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
@@ -210,13 +234,13 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
             </div>
           </div>
         ) : (
-          tasks.map(task => {
+          visibleTasks.map(task => {
             const meta = statusMeta(task.status);
             const created = task.createdAt || task.created_at;
             const completed = task.completed_at || (['completed', 'failed', 'canceled'].includes(task.status) ? (task.updatedAt || task.updated_at) : null);
             const error = task.error || task.error_message;
             return (
-              <div key={`${task.source}-${task.id}`} className="group relative overflow-hidden rounded-2xl border border-zinc-800/90 bg-[#18191c]/90 p-4 hover:border-zinc-700 hover:bg-[#1b1c20] transition-all">
+              <div key={`${task.source}-${task.id}`} className="group relative shrink-0 overflow-hidden rounded-2xl border border-zinc-800/90 bg-[#18191c]/90 p-4 hover:border-zinc-700 hover:bg-[#1b1c20] transition-all">
                 <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-cyan-400/60 via-transparent to-purple-400/40 opacity-70" />
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-black/30 border border-zinc-800 flex items-center justify-center text-zinc-300 group-hover:text-cyan-300 transition-colors">
@@ -252,7 +276,7 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
                     </div>
 
                     {error && (
-                      <div className="mt-3 rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200 leading-relaxed">
+                      <div className="mt-3 max-h-24 overflow-y-auto rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-200 leading-relaxed custom-scrollbar">
                         失败原因：{error}
                       </div>
                     )}
@@ -268,6 +292,30 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
           })
         )}
       </div>
+
+      {tasks.length > PAGE_SIZE && (
+        <div className="shrink-0 border-t border-zinc-800/80 bg-black/20 px-5 py-4 flex items-center justify-between">
+          <div className="text-xs text-zinc-500">
+            第 <span className="text-zinc-200">{safePage}</span> / {pageCount} 页 · 共 {tasks.length} 个任务
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={safePage <= 1}
+              onClick={() => setPage(prev => Math.max(1, prev - 1))}
+              className="px-3 py-1.5 rounded-xl border border-zinc-800 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            >
+              上一页
+            </button>
+            <button
+              disabled={safePage >= pageCount}
+              onClick={() => setPage(prev => Math.min(pageCount, prev + 1))}
+              className="px-3 py-1.5 rounded-xl border border-zinc-800 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

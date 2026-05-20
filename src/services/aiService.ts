@@ -601,7 +601,7 @@ export async function runImageGeneration(
 ): Promise<string> {
   const normalizedPrompt = buildImageGenerationPrompt(prompt, aspectRatio, resolution);
   try {
-    const { result } = await generationRepository.submitImage({
+    const { result, task } = await generationRepository.submitImage({
       prompt: normalizedPrompt,
       referenceImageBase64,
       aspectRatio,
@@ -624,6 +624,29 @@ export async function runImageGeneration(
     if (result.url) {
       return await imageUrlToDataUrl(result.url, signal);
     }
+
+    if (task?.id && options?.workspaceProjectId) {
+      const completedTask = await generationRepository.waitForTask(options.workspaceProjectId, task.id, {
+        timeoutMs: Number((import.meta as any).env?.VITE_IMAGE_GENERATION_WAIT_MS || 360000),
+        intervalMs: 3000
+      });
+
+      if (completedTask.status === 'failed') {
+        throw new Error(completedTask.errorMessage || '图片生成失败');
+      }
+
+      const output = completedTask.output as any;
+      const generatedUrl = output?.url || output?.result?.url || output?.data?.[0]?.url;
+      const generatedBase64 = output?.data?.[0]?.b64_json
+        ? `data:image/png;base64,${output.data[0].b64_json}`
+        : undefined;
+
+      if (generatedUrl || generatedBase64) {
+        return await imageUrlToDataUrl(generatedUrl || generatedBase64, signal);
+      }
+    }
+
+    throw new Error('图片生成任务已提交，但尚未返回图片地址，请稍后查看任务队列。');
   } catch (error: any) {
     if (error.name === 'AbortError' || signal?.aborted) {
       throw new Error("Task cancelled by user");

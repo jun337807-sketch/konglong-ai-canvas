@@ -102,6 +102,32 @@ export const generationRepository = {
     return requestGeneration('/api/generation/image', input as unknown as Record<string, unknown>);
   },
 
+  async listTasks(projectId: string): Promise<GenerationTaskSnapshot[]> {
+    const res = await fetch(`/api/workspace-projects/${encodeURIComponent(projectId)}/tasks`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `Generation task list failed: ${res.status}`);
+    }
+    return (data.tasks || []).map(mapTask).filter(Boolean) as GenerationTaskSnapshot[];
+  },
+
+  async waitForTask(projectId: string, taskId: string, options?: { timeoutMs?: number; intervalMs?: number }): Promise<GenerationTaskSnapshot> {
+    const timeoutMs = options?.timeoutMs || 360000;
+    const intervalMs = options?.intervalMs || 3000;
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const tasks = await this.listTasks(projectId);
+      const task = tasks.find(item => item.id === taskId);
+      if (task?.status === 'completed' || task?.status === 'failed' || task?.status === 'canceled') {
+        return task;
+      }
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+
+    throw new Error(`图片生成仍在服务商后台处理中，已等待 ${Math.round(timeoutMs / 1000)} 秒。请稍后查看任务队列。`);
+  },
+
   submitVideo(input: VideoGenerationRequest): Promise<GenerationResponse> {
     return requestGeneration('/api/generation/video', input as unknown as Record<string, unknown>);
   },
