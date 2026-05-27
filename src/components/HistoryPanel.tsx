@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MediaHistoryService, MediaHistoryItem } from '../services/mediaHistoryService';
 import { X, Trash2, CheckSquare, Search, Minus, Plus, ArrowDownUp } from 'lucide-react';
 import { useReactFlow } from '@xyflow/react';
@@ -11,10 +11,18 @@ export function HistoryPanel({
   onClose: () => void 
 }) {
   const [activeTab, setActiveTab] = useState<'image' | 'video' | 'audio'>('image');
-  const [history, setHistory] = useState<MediaHistoryItem[]>(MediaHistoryService.getHistory());
+  const [history, setHistory] = useState<MediaHistoryItem[]>([]);
   const [previewMedia, setPreviewMedia] = useState<MediaHistoryItem | null>(null);
   
   const { setNodes, getNodes } = useReactFlow();
+
+  const reloadHistory = async () => {
+    setHistory(await MediaHistoryService.getProjectHistory(projectId));
+  };
+
+  useEffect(() => {
+    void reloadHistory();
+  }, [projectId]);
 
   const groupedHistory = useMemo(() => {
     const filtered = history.filter(h => h.type === activeTab);
@@ -37,7 +45,7 @@ export function HistoryPanel({
   const handleDelete = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     MediaHistoryService.removeHistory(id);
-    setHistory(MediaHistoryService.getHistory());
+    void reloadHistory();
   };
 
   const handleUse = (e: React.MouseEvent, item: MediaHistoryItem) => {

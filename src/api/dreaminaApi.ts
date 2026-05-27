@@ -10,7 +10,11 @@ export interface DreaminaStatusResult {
 let lastLocalTaskId: string | null = null;
 
 export interface DreaminaVideoOptions {
+  workspaceProjectId?: string;
+  createdBy?: string;
   imageUrls?: string[];
+  referenceRoles?: string[];
+  cleanOutputConstraints?: boolean;
   ratio?: string;
   duration?: number;
   resolution?: string;
@@ -70,16 +74,21 @@ export async function submitDreaminaVideo(
   const imageUrls = options.imageUrls ?? (imageUrl ? [imageUrl] : []);
   const { result, task } = await generationRepository.submitVideo({
     prompt,
+    workspaceProjectId: options.workspaceProjectId,
     imageUrls,
+    referenceRoles: options.referenceRoles,
+    cleanOutputConstraints: options.cleanOutputConstraints,
     ratio: normalizeRatio(options.ratio),
     duration: normalizeDuration(options.duration),
     generateAudio: options.generateAudio ?? true,
-    createdBy: localStorage.getItem('dino_currentUser') || 'system',
+    createdBy: options.createdBy || localStorage.getItem('dino_currentUser') || 'system',
     metadata: {
       source: 'dreaminaApi.compat',
       resolution: normalizeResolution(options.resolution),
       videoModel: options.model,
       referenceCount: imageUrls.length,
+      referenceRoles: options.referenceRoles,
+      cleanOutputConstraints: options.cleanOutputConstraints,
       ...options.metadata
     }
   });
@@ -126,19 +135,30 @@ export async function generateDreaminaVideoAndWait(
   const taskId = await submitDreaminaVideo(prompt, imageUrl, options);
   onProgress?.('submitted');
 
+  let transientErrorCount = 0;
   while (true) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    const res = await queryDreaminaStatus(taskId);
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    try {
+      const res = await queryDreaminaStatus(taskId);
+      transientErrorCount = 0;
 
-    if (res.status === 'success' || res.status === 'completed') {
-      if (!res.video_url) throw new Error('视频生成完成，但没有返回视频链接');
-      return res.video_url;
-    }
+      if (res.status === 'success' || res.status === 'completed') {
+        if (!res.video_url) throw new Error('视频生成完成，但没有返回视频链接');
+        return res.video_url;
+      }
 
-    if (res.status === 'failed' || res.status === 'error') {
-      throw new Error(res.fail_reason || '视频生成失败');
+      if (res.status === 'failed' || res.status === 'error') {
+        throw new Error(res.fail_reason || '视频生成失败');
+      }
+    } catch (error: any) {
+      transientErrorCount += 1;
+      console.warn('[DreaminaVideo] query transient error, keep waiting:', error);
+      if (transientErrorCount >= 90) {
+        throw new Error(`视频任务仍可能在服务商后台处理中，但连续查询失败：${error?.message || '网络异常'}`);
+      }
     }
 
     onProgress?.('processing');
   }
 }
+

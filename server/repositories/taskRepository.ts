@@ -25,6 +25,14 @@ export function listTasksByProject(projectId: string): DbTask[] {
   `).all(projectId) as DbTask[];
 }
 
+export function deleteTasksByProject(projectId: string): number {
+  const result = getSqliteDb().prepare(`
+    DELETE FROM tasks
+    WHERE workspace_project_id = ?
+  `).run(projectId);
+  return Number(result.changes || 0);
+}
+
 export function findTaskById(id: string): DbTask | undefined {
   return getSqliteDb().prepare(`
     SELECT * FROM tasks

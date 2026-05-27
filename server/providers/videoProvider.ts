@@ -34,17 +34,20 @@ function clampDuration(value?: number) {
   return Math.min(15, Math.max(4, Math.round(duration)));
 }
 
-function inferReferenceType(url: string): 'image' | 'video' {
-  return String(url).toLowerCase().match(/\.(mp4|mov|webm)(\?|$)/) ? 'video' : 'image';
+function inferReferenceType(url: string): 'image' | 'video' | 'audio' {
+  const normalized = String(url).toLowerCase();
+  if (normalized.startsWith('data:audio/') || normalized.match(/\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/)) return 'audio';
+  return normalized.match(/\.(mp4|mov|webm)(\?|$)/) ? 'video' : 'image';
 }
 
-function inferSafeExtension(url: string, type: 'image' | 'video') {
-  const fallback = type === 'video' ? 'mp4' : 'jpg';
+function inferSafeExtension(url: string, type: 'image' | 'video' | 'audio') {
+  const fallback = type === 'video' ? 'mp4' : type === 'audio' ? 'mp3' : 'jpg';
   try {
     const pathname = new URL(url).pathname;
     const ext = pathname.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!ext) return fallback;
     if (type === 'video' && ['mp4', 'mov', 'webm'].includes(ext)) return ext;
+    if (type === 'audio' && ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'].includes(ext)) return ext;
     if (type === 'image' && ['jpg', 'jpeg', 'png', 'webp'].includes(ext)) return ext;
   } catch {
     // keep fallback
@@ -69,7 +72,13 @@ function hasNonAsciiUrlPart(url: string) {
   return /[^\x00-\x7F]/.test(url);
 }
 
-async function prepareReferenceUrl(url: string, type: 'image' | 'video') {
+function normalizeReferenceRole(value?: string) {
+  const normalized = String(value || '').toLowerCase();
+  if (['character', 'scene', 'prop', 'last_frame', 'style'].includes(normalized)) return normalized;
+  return 'style';
+}
+
+async function prepareReferenceUrl(url: string, type: 'image' | 'video' | 'audio') {
   const normalizedUrl = normalizeReferenceUrl(url);
   const shouldIngest =
     process.env.VIDEO_REFERENCE_INGEST_TO_TOS === 'true' ||
@@ -155,26 +164,50 @@ function normalizeVideoResult(raw: any, provider: string): ProviderTaskResult {
 }
 
 async function buildMonthlyPayload(input: VideoGenerationInput) {
+  const referenceRoles = Array.isArray(input.referenceRoles)
+    ? input.referenceRoles
+    : Array.isArray(input.metadata?.referenceRoles)
+      ? input.metadata.referenceRoles as string[]
+      : [];
   const files = await Promise.all((input.imageUrls || [])
     .filter(Boolean)
+    .slice(0, 8)
     .map(async (url, index) => {
       const type = inferReferenceType(url);
+      if (type === 'audio' && process.env.VIDEO_REFERENCE_AUDIO_ENABLED === 'false') {
+        throw new Error('当前视频接口已关闭音频参考。若第三方确认支持音频，请在服务器 .env 设置 VIDEO_REFERENCE_AUDIO_ENABLED=true 后重启服务。');
+      }
       const safeUrl = await prepareReferenceUrl(url, type);
       const ext = inferSafeExtension(safeUrl, type);
+      const role = normalizeReferenceRole(referenceRoles[index]);
       return {
         url: safeUrl,
         type,
-        name: `ref_${index + 1}.${ext}`
+        name: `ref_${index + 1}.${ext}`,
+        role
       };
     }));
 
+  const cleanOutputConstraints =
+    input.cleanOutputConstraints === true ||
+    input.metadata?.cleanOutputConstraints === true;
+  const finalPrompt = [
+    input.prompt,
+    ...(cleanOutputConstraints
+      ? [
+          '',
+          '生成约束：保持无字幕，不要生成水印，不要生成Logo。'
+        ]
+      : [])
+  ].join('\n');
+
   return {
-    prompt: input.prompt,
+    prompt: finalPrompt,
     model: getVideoModel(),
     ratio: input.ratio || '16:9',
     duration: clampDuration(input.duration),
     resolution: getVideoResolution(input),
-    ...(files.length > 0 ? { files } : {})
+    ...(files.length > 0 ? { files: files.map(({ role, ...file }) => file) } : {})
   };
 }
 

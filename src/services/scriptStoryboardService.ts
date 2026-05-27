@@ -9,10 +9,30 @@ const db = {
 
 class ScriptStoryboardService {
   async getEpisodesByProject(projectId: string): Promise<Episode[]> {
-    return Promise.resolve(db.getEpisodes().filter(e => e.project_id === projectId));
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/episodes`);
+      if (!res.ok) throw new Error(`episodes request failed: ${res.status}`);
+      const data = await res.json();
+      return data.episodes || [];
+    } catch (err) {
+      console.warn('Use local episodes fallback:', err);
+      return Promise.resolve(db.getEpisodes().filter(e => e.project_id === projectId));
+    }
   }
 
   async createEpisode(epData: Partial<Episode> & { project_id: string }): Promise<Episode> {
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(epData.project_id)}/episodes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(epData)
+      });
+      if (!res.ok) throw new Error(`create episode failed: ${res.status}`);
+      const data = await res.json();
+      return data.episode;
+    } catch (err) {
+      console.warn('Create local episode fallback:', err);
+    }
     const eps = db.getEpisodes();
     const newEp: Episode = {
       episode_id: `ep_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -34,6 +54,18 @@ class ScriptStoryboardService {
   }
 
   async updateEpisode(episodeId: string, updates: Partial<Episode>): Promise<Episode | null> {
+    try {
+      const res = await fetch(`/api/episodes/${encodeURIComponent(episodeId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (!res.ok) throw new Error(`update episode failed: ${res.status}`);
+      const data = await res.json();
+      return data.episode;
+    } catch (err) {
+      console.warn('Update local episode fallback:', err);
+    }
     const eps = db.getEpisodes();
     const idx = eps.findIndex(e => e.episode_id === episodeId);
     if (idx === -1) return Promise.resolve(null);
@@ -43,6 +75,14 @@ class ScriptStoryboardService {
   }
 
   async deleteEpisode(episodeId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/episodes/${encodeURIComponent(episodeId)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`delete episode failed: ${res.status}`);
+      const data = await res.json();
+      return Boolean(data.deleted);
+    } catch (err) {
+      console.warn('Delete local episode fallback:', err);
+    }
     const eps = db.getEpisodes();
     const len = eps.length;
     const filtered = eps.filter(e => e.episode_id !== episodeId);

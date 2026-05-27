@@ -1,4 +1,4 @@
-export type UploadableMediaType = 'image' | 'video';
+export type UploadableMediaType = 'image' | 'video' | 'audio';
 
 function isPublicUrl(url: string) {
   return /^https?:\/\//i.test(url);
@@ -10,7 +10,9 @@ function extensionFromMime(mimeType: string, mediaType: UploadableMediaType) {
     if (subtype === 'jpeg') return 'jpg';
     if (/^[a-z0-9]+$/.test(subtype)) return subtype;
   }
-  return mediaType === 'video' ? 'mp4' : 'jpg';
+  if (mediaType === 'video') return 'mp4';
+  if (mediaType === 'audio') return 'mp3';
+  return 'jpg';
 }
 
 async function blobFromDataUrl(dataUrl: string) {

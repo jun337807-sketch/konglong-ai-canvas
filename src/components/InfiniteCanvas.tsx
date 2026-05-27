@@ -35,7 +35,7 @@ import {
   Play, Maximize, Download, Sun, SplitSquareHorizontal, 
   Move3D, Eye, Sparkles, Focus, RotateCw, BookMarked, 
   Copy, CopyPlus, ClipboardPaste, Trash2, BoxSelect, Settings, HelpCircle,
-  Plus, Share2, Shapes, Clock, Headphones, AlignLeft, Image as ImageIcon, Video, Scissors, AudioLines, FileText, Upload, Box, MapPin, Monitor, Camera, Maximize2, Minimize2, Languages, Settings2, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, User, RefreshCw, CheckCircle, Loader2, Briefcase, List, ListTodo, Save
+  Plus, Share2, Shapes, Clock, Headphones, AlignLeft, Image as ImageIcon, Video, Scissors, AudioLines, FileText, Upload, Box, MapPin, Monitor, Camera, Maximize2, Minimize2, Languages, Settings2, Zap, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, User, RefreshCw, CheckCircle, Loader2, Briefcase, List, ListTodo, Save, Check
 } from 'lucide-react';
 import { useCanvasHistory } from '../hooks/useCanvasHistory';
 import { HistoryPanel } from './HistoryPanel';
@@ -43,9 +43,11 @@ import { VersionPanel } from './VersionPanel';
 import { CapabilityPanel } from './CapabilityPanel';
 import { MediaCapability } from '../types/task';
 import { CleanPanoramaViewer, CleanPanoramaRef } from './CleanPanoramaViewer';
-import { getAIClient, runImageGeneration, runMegaBreakdown, runScriptReview } from '../services/aiService';
+import { getAIClient, imageUrlToDataUrl, runImageGeneration, runMegaBreakdown, runScriptReview } from '../services/aiService';
 import { taskQueueManager } from '../services/taskQueueManager';
 import { assetManager } from '../services/assetManager';
+import { MediaHistoryService } from '../services/mediaHistoryService';
+import { ensurePublicMediaUrl } from '../services/mediaUploadService';
 
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { ScriptStoryboardPanel } from './workspace/ScriptStoryboardPanel';
@@ -68,17 +70,123 @@ const selectedBorder = "border-[rgba(255,255,255,0.15)] shadow-[0_0_20px_rgba(25
 const defaultBorder = "border-zinc-800/80";
 const nodeBg = "bg-[#111214]/90 backdrop-blur-md";
 const handleStyle = "!w-5 !h-5 !min-w-[20px] !min-h-[20px] !absolute !top-1/2 !-translate-y-1/2 !bg-transparent !border-transparent !opacity-0 transition-all duration-200 cursor-crosshair z-50 rounded-full";
-const plusHandleStyle = "!relative !right-auto !top-auto !translate-y-0 !w-8 !h-8 !min-w-[32px] !min-h-[32px] !bg-[#2A2A2A] !border !border-zinc-600 !rounded-full !opacity-100 flex items-center justify-center text-zinc-300 hover:!bg-zinc-700 hover:!border-[#00bcd4] hover:text-white hover:!scale-110 hover:shadow-[0_0_16px_rgba(0,188,212,0.55)] transition-all duration-200 cursor-crosshair z-50";
+const plusHandleStyle = "!relative !right-auto !top-auto !translate-y-0 !w-7 !h-7 !min-w-[28px] !min-h-[28px] !bg-[#2A2A2A] !border !border-zinc-600 !rounded-full !opacity-100 flex items-center justify-center text-zinc-300 hover:!bg-zinc-700 hover:!border-[#00bcd4] hover:text-white hover:!scale-110 hover:shadow-[0_0_16px_rgba(0,188,212,0.55)] transition-all duration-200 cursor-crosshair z-50";
 const resizerHandleStyle = "w-2 h-2 bg-white/50 rounded-sm border-none shadow-[0_0_4px_rgba(255,255,255,0.3)]";
 const entityCategories = ['人物', '场景', '道具', '特效', '其他'];
 
 const FloatingPlusHandle = ({ type, position, title }: { type: 'source' | 'target'; position: Position; title?: string }) => (
-  <div className={`absolute top-0 bottom-0 ${position === Position.Left ? '-left-10' : '-right-10'} w-10 z-40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center`}>
+  <div className={`absolute top-0 bottom-0 ${position === Position.Left ? '-left-8' : '-right-8'} w-8 z-40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center`}>
     <Handle type={type} position={position} className={plusHandleStyle} title={title || '按住拖拽连接'}>
       <Plus size={14} />
     </Handle>
   </div>
 );
+
+function extractGeneratedMediaUrl(value: any): string | undefined {
+  const looksLikeMediaUrl = (text: string) => {
+    if (!/^https?:\/\//i.test(text)) return false;
+    const clean = text.split('?')[0].toLowerCase();
+    return /\.(png|jpe?g|webp|gif|avif|bmp|mp4|mov|webm)$/i.test(clean)
+      || /\/file\//i.test(text)
+      || /aitohumanize|grsai|tos-|volces|volc|cdn|image|img|media|oss|cos/i.test(text);
+  };
+
+  const find = (item: any, depth = 0): string | undefined => {
+    if (!item || depth > 8) return undefined;
+    if (typeof item === 'string') {
+      const text = item.trim();
+      if (looksLikeMediaUrl(text)) return text;
+      if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+        try {
+          return find(JSON.parse(text), depth + 1);
+        } catch {
+          return undefined;
+        }
+      }
+      return undefined;
+    }
+    if (Array.isArray(item)) {
+      for (const child of item) {
+        const url = find(child, depth + 1);
+        if (url) return url;
+      }
+      return undefined;
+    }
+    if (typeof item !== 'object') return undefined;
+
+    for (const key of [
+      'url', 'imageUrl', 'image_url', 'videoUrl', 'video_url',
+      'outputUrl', 'output_url', 'fileUrl', 'file_url',
+      'mediaUrl', 'media_url', 'resultUrl', 'result_url'
+    ]) {
+      const url = find(item[key], depth + 1);
+      if (url) return url;
+    }
+
+    for (const key of ['result', 'results', 'raw', 'data', 'output', 'outputs', 'images', 'image', 'media', 'files', 'file']) {
+      const url = find(item[key], depth + 1);
+      if (url) return url;
+    }
+
+    for (const [key, child] of Object.entries(item)) {
+      if (['request', 'prompt', 'input', 'inputs', 'payload'].includes(key)) continue;
+      const url = find(child, depth + 1);
+      if (url) return url;
+    }
+    return undefined;
+  };
+
+  return find(value);
+}
+
+function normalizeServerGenerationTask(task: any) {
+  const input = task?.input || {};
+  const output = task?.output || null;
+  const capability = String(task?.capability || '');
+  const type = capability.includes('video') ? 'video_generation' : 'image_generation';
+  return {
+    id: task.id,
+    projectId: task.workspace_project_id,
+    type,
+    status: task.status,
+    nodeId: task.nodeId || input?.metadata?.nodeId || input?.nodeId,
+    payload: input,
+    result: output,
+    error: task.error_message || output?.errorMessage,
+    createdAt: task.created_at,
+    updatedAt: task.updated_at || task.completed_at || task.created_at
+  };
+}
+
+function normalizeGenerationStatus(status?: string) {
+  const normalized = String(status || '').toLowerCase();
+  if (['success', 'succeeded', 'completed', 'complete', 'done'].includes(normalized)) return 'completed';
+  if (['fail', 'failed', 'failure', 'error', 'errored', 'cancel', 'canceled', 'cancelled'].includes(normalized)) return 'failed';
+  if (['running', 'processing', 'submitted', 'in_progress', 'progress', 'pending', 'queued', 'queueing'].includes(normalized)) return 'running';
+  return normalized || 'unknown';
+}
+
+async function fetchProjectGenerationTasks(projectId: string) {
+  try {
+    const response = await fetch(`/api/workspace-projects/${encodeURIComponent(projectId)}/tasks`, {
+      headers: { Accept: 'application/json' }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.success) return [];
+    return (data.tasks || []).map(normalizeServerGenerationTask);
+  } catch (error) {
+    console.warn('Failed to fetch server generation tasks:', error);
+    return [];
+  }
+}
+
+async function toInlineImageParts(imageUrl: string) {
+  const dataUrl = imageUrl.startsWith('data:image/') ? imageUrl : await imageUrlToDataUrl(imageUrl);
+  return {
+    data: dataUrl.split(',')[1],
+    mimeType: dataUrl.split(';')[0].split(':')[1]
+  };
+}
 
 function inferEntityCategory(input?: string) {
   const text = (input || '').toLowerCase();
@@ -96,6 +204,31 @@ function inferSharedAssetCategory(input?: string, mediaType?: 'image' | 'video')
   return '单帧画面';
 }
 
+function inferVideoReferenceRoleFromNode(node: any, index: number, total: number, activeTab: string) {
+  const data = node?.data || {};
+  const text = [
+    data.referenceRole,
+    data.role,
+    data.category,
+    data.assetCategory,
+    data.entityCategory,
+    data.type,
+    data.title,
+    data.name,
+    data.prompt,
+    Array.isArray(data.tags) ? data.tags.join(' ') : ''
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (activeTab === '首尾帧' && index === total - 1) return 'last_frame';
+  if (/last[_\s-]?frame|尾帧|最后一帧/.test(text)) return 'last_frame';
+  if (/character|person|portrait|face|主体|人物|角色|人像|脸|肖像|三视图/.test(text)) return 'character';
+  if (/scene|location|environment|background|landscape|interior|exterior|场景|空间|环境|背景|建筑|街道|室内|室外|城市|山水/.test(text)) return 'scene';
+  if (/prop|product|object|item|道具|产品|物品|器物|服装|武器|车辆/.test(text)) return 'prop';
+  if (/style|mood|lighting|color|reference|风格|氛围|光影|色调|质感|参考/.test(text)) return 'style';
+
+  return activeTab === '首尾帧' && total === 1 ? 'last_frame' : 'style';
+}
+
 function inferDownloadExtension(url: string, fallback: string) {
   if (url.startsWith('data:image/')) return url.slice('data:image/'.length).split(';')[0].replace('jpeg', 'jpg') || fallback;
   if (url.startsWith('data:video/')) return url.slice('data:video/'.length).split(';')[0] || fallback;
@@ -107,14 +240,51 @@ function inferDownloadExtension(url: string, fallback: string) {
   }
 }
 
-function triggerMediaDownload(url: string, filename: string) {
+function getMediaProxyUrl(url: string) {
+  return `/api/media-proxy?url=${encodeURIComponent(url)}`;
+}
+
+function fallbackImageToProxy(e: React.SyntheticEvent<HTMLImageElement>) {
+  const image = e.currentTarget;
+  const originalUrl = image.dataset.originalSrc || image.src;
+  if (!/^https?:\/\//i.test(originalUrl) || image.dataset.proxyFallback === 'true') return;
+  image.dataset.proxyFallback = 'true';
+  image.src = getMediaProxyUrl(originalUrl);
+}
+function fallbackVideoToProxy(e: React.SyntheticEvent<HTMLVideoElement>) {
+  const video = e.currentTarget;
+  const originalUrl = video.dataset.originalSrc || video.currentSrc || video.src;
+  if (!/^https?:\/\//i.test(originalUrl) || video.dataset.proxyFallback === 'true') return;
+  video.dataset.proxyFallback = 'true';
+  video.src = getMediaProxyUrl(originalUrl);
+  video.load();
+}
+
+async function triggerMediaDownload(url: string, filename: string) {
+  let downloadUrl = url;
+  let shouldRevoke = false;
+
+  if (!url.startsWith('data:')) {
+    const response = await fetch(getMediaProxyUrl(url));
+    if (!response.ok) {
+      throw new Error(`下载失败：HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    downloadUrl = URL.createObjectURL(blob);
+    shouldRevoke = true;
+  }
+
   const link = document.createElement('a');
-  link.href = url;
+  link.href = downloadUrl;
   link.download = filename;
   link.rel = 'noopener';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+
+  if (shouldRevoke) {
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  }
 }
 
 // Custom Node Components
@@ -321,6 +491,113 @@ const TextNode = ({ data, id, selected }: any) => {
   );
 };
 
+const buildCharacterSheetPrompt = (basePrompt: string, uid: string) => {
+  const prompt = basePrompt.trim();
+  if (prompt.includes('多视图角色设定图') || prompt.includes('角色三视图')) return prompt;
+
+  return `${prompt}
+
+【角色三视图生成指令】
+多视图角色设定图，结构化排版，严格一致性控制。根据参考图与提示词自动判断画风：如果原图/提示词偏写实，则生成写实摄影、真实物理世界人物；如果原图/提示词偏动漫或插画，则保持原图动漫/插画画风。
+核心布局：左侧 3 个大型全身视图，正面 + 背面 + 侧面，A 姿势，双臂自然下垂，身体直立，人物比例严谨，解剖结构准确。右侧 4 格肖像矩阵，2x2 排列，包含正面肖像、左侧肖像、右侧肖像、角色右眼与皮肤/材质微距细节。
+构图要求：整体横向排版，左侧全身三视图，右侧肖像矩阵，布局清晰，间距均匀；所有视图人物尺度统一，对齐严格，比例完全一致。
+机位控制：全身视图为正交视角，无透视畸变；肖像视图为标准人像机位。
+环境与光影：统一中性纯色背景，影棚级柔光，光照方向统一，强度一致，无明显阴影，无高光溢出。
+一致性约束：所有视图必须为同一角色，面部特征、骨骼结构、体型、服装完全一致，不允许漂移；不允许姿势变化、服装变化、光影变化、背景变化、风格偏移。
+画质要求：超高分辨率，极致清晰，细节锐利，皮肤与材质真实。画面边缘带有清晰排版文字「人物 UID：${uid}_01」。`;
+};
+
+type SingleFrameReferenceRole = 'character' | 'quality_scene' | 'frame' | 'prop';
+
+const singleFrameRoleLabels: Record<SingleFrameReferenceRole, string> = {
+  frame: '单帧画面',
+  character: '人物',
+  quality_scene: '场景',
+  prop: '道具'
+};
+
+const getNodeImageUrl = (node: any): string => {
+  return String(
+    node?.data?.imageUrl ||
+    node?.data?.url ||
+    node?.data?.mediaUrl ||
+    node?.data?.thumbnailUrl ||
+    ''
+  );
+};
+
+const inferSingleFrameReferenceRole = (node: any): SingleFrameReferenceRole => {
+  const manualRole = node?.data?.singleFrameReferenceRole || node?.data?.referenceRole;
+  if (manualRole && ['character', 'quality_scene', 'frame', 'prop'].includes(manualRole)) {
+    return manualRole as SingleFrameReferenceRole;
+  }
+
+  const text = [
+    node?.data?.title,
+    node?.data?.name,
+    node?.data?.prompt,
+    node?.data?.category,
+    node?.data?.assetType,
+    node?.data?.role,
+    node?.data?.referenceRole,
+    node?.data?.tags,
+  ].flat().filter(Boolean).join(' ').toLowerCase();
+
+  if (/单帧|尾帧|首帧|截图|截帧|frame|shot|still/.test(text)) return 'frame';
+  if (/人物|角色|主体|人像|模特|character|person|portrait|subject/.test(text)) return 'character';
+  if (/道具|物品|产品|服装|衣服|手机|prop|object|product|costume/.test(text)) return 'prop';
+  if (/场景|环境|建筑|空间|门店|室内|室外|街道|scene|environment|location|building/.test(text)) return 'quality_scene';
+
+  return 'quality_scene';
+};
+
+const buildSingleFrameRedrawPrompt = (input: {
+  userPrompt?: string;
+  hasCharacter: boolean;
+  hasQualityScene: boolean;
+  hasProps: boolean;
+}) => {
+  const characterRef = input.hasCharacter
+    ? '图A为人物资产图，最高优先级，用于锁定人物五官、脸型、发型、服装、体型、肤色和人物整体真实质感。'
+    : '如未提供图A人物资产图，则以图C中的人物身份、姿态、服装和画面关系为准，只做真实摄影质感提升。';
+  const sceneRef = input.hasQualityScene
+    ? '图B为高质量真实摄影场景/质感参考图，仅用于提供真实摄影质感、光线质量、色温、清晰度、细节表现和环境画质标准，不用于改变图C背景空间结构。'
+    : '如未提供图B高质量场景参考图，则自行提升真实摄影质感、光线质量、清晰度、色彩统一度和环境细节，但不得改变图C背景空间结构。';
+  const propRef = input.hasProps
+    ? '道具参考图用于锁定关键道具的外观、材质、比例和相对关系，但不得改变图C中的构图、遮挡和空间关系。'
+    : '';
+
+  return `任务目标：将人物资产质感、高质量真实摄影场景质感，与单帧画面的构图和背景空间关系进行融合重绘，输出一张高清、干净、真实摄影感的高质量单帧画面。
+
+参考图说明：
+${characterRef}
+${sceneRef}
+图C为当前单帧/尾帧截图，最高优先级，用于锁定当前镜头构图、人物当前姿态、人物与道具相对位置、手机位置、遮挡关系、景别、镜头透视，以及背景空间结构和关键环境锚点。
+${propRef}
+
+严格要求：
+最终画面必须严格延续图C中的背景空间结构，不改变图C中的环境类型和关键空间锚点。
+必须保留图C中的背景关系，包括背景所在空间类型、门店/建筑/玻璃门/台阶等关键结构、前中后景透视关系、人物与背景的相对位置、画面构图和遮挡关系。
+图B只用于提升整体画面质量，不得将图B中的背景结构替换到图C中。图B不能改变图C的背景场景类型，不能把图C中的门店空间改成树路街景，也不能替换为新的街道布局。
+
+融合要求：
+人物动作、构图和背景结构以图C为主；人物五官、发型、服装和人物真实摄影质感以图A为主；整体光线质量、清晰度、色彩统一度和真实摄影画质以图B为主。
+
+负面限制：
+禁止继承图C的低清感、模糊、压缩噪点、偏色、视频帧质感。
+禁止把图B中的不同背景结构替换到图C中。
+禁止新增与图C不一致的树木、道路、车流、林荫道、街景布局或其他空间元素。
+禁止改变图C现有的门店、玻璃门、建筑入口、台阶等关键背景结构。
+
+画面要求：
+高清、干净、色彩统一、真实摄影感、自然光线、人物稳定、环境稳定。
+非动漫、非插画、非游戏CG、禁止字幕、不要水印、不要Logo。
+
+输出要求：
+输出单张高质量首帧图。最终画面应当看起来像：图C的同一空间、同一动作、同一构图，但被图A和图B重新提升为高质量真实摄影画面。
+${input.userPrompt ? `\n补充要求：${input.userPrompt}` : ''}`;
+};
+
 const ImageNode = ({ data, id, selected }: any) => {
   const edges = useEdges();
   const nodes = useNodes();
@@ -336,6 +613,8 @@ const ImageNode = ({ data, id, selected }: any) => {
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(data.title || '图片节点');
+  const [imageLoadFailed, setImageLoadFailed] = useState(false);
+  const [imageUsingProxy, setImageUsingProxy] = useState(false);
   const panoramaRef = useRef<CleanPanoramaRef>(null);
   const annotationCanvasRef = useRef<HTMLCanvasElement>(null);
   const lastAnnotationPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -356,6 +635,11 @@ const ImageNode = ({ data, id, selected }: any) => {
       }
     }
   };
+
+  React.useEffect(() => {
+    setImageLoadFailed(false);
+    setImageUsingProxy(false);
+  }, [data.imageUrl]);
 
   const loadImageIntoAnnotationCanvas = useCallback(() => {
     const canvas = annotationCanvasRef.current;
@@ -467,15 +751,22 @@ const ImageNode = ({ data, id, selected }: any) => {
     lastAnnotationPointRef.current = null;
   };
 
-  const saveAnnotationAsNode = () => {
+  const saveAnnotationAsNode = async () => {
     const canvas = annotationCanvasRef.current;
     if (!canvas || !data.onAddNode) return;
     const currentNode = getNode(id);
     const position = currentNode
       ? { x: currentNode.position.x + Number(currentNode.width || currentNode.style?.width || 320) + 90, y: currentNode.position.y }
       : undefined;
+    const dataUrl = canvas.toDataURL('image/png');
+    let imageUrl = dataUrl;
+    try {
+      imageUrl = await ensurePublicMediaUrl(dataUrl, 'image', 0);
+    } catch (error) {
+      console.warn('Annotation image upload to public storage failed, use local preview only:', error);
+    }
     data.onAddNode('imageNode', undefined, position, id, {
-      imageUrl: canvas.toDataURL('image/png'),
+      imageUrl,
       title: `${data.title || '图片'}-标注版`,
       initialWidth: Math.min(420, canvas.width),
       initialHeight: Math.round(Math.min(420, canvas.width) * (canvas.height / canvas.width))
@@ -484,12 +775,19 @@ const ImageNode = ({ data, id, selected }: any) => {
   };
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showFormatMenu, setShowFormatMenu] = useState(false);
-  const [resolution, setResolution] = useState('2K');
-  const [aspectRatio, setAspectRatio] = useState('16:9');
-  const [model, setModel] = useState('KONGLONG Image');
+  const [resolution, setResolution] = useState(data.resolution || '4K');
+  const [aspectRatio, setAspectRatio] = useState(data.aspectRatio || data.requestedAspectRatio || '16:9');
+  const [model, setModel] = useState(data.uiModel || data.model || 'KONGLONG Image');
   const [showModelMenu, setShowModelMenu] = useState(false);
-  const [imageCount, setImageCount] = useState(1);
+  const [imageCount, setImageCount] = useState(data.imageCount || 1);
   const [showCountMenu, setShowCountMenu] = useState(false);
+  const [characterSheetMode, setCharacterSheetMode] = useState(!!data.characterSheetMode);
+
+  const persistGenerationOptions = useCallback((patch: Record<string, any>) => {
+    setNodes((nds) => nds.map((node) => (
+      node.id === id ? { ...node, data: { ...node.data, ...patch } } : node
+    )));
+  }, [id, setNodes]);
   
   const [stylePreset, setStylePreset] = useState('写实');
   const [showStyleMenu, setShowStyleMenu] = useState(false);
@@ -528,6 +826,12 @@ const ImageNode = ({ data, id, selected }: any) => {
   const incomingEdges = edges.filter((e: any) => e.target === id);
   const referenceNodes = incomingEdges.map((e: any) => nodes.find((n: any) => n.id === e.source)).filter(Boolean);
   const referenceImages = referenceNodes.filter((n: any) => n?.type === 'imageNode' && n?.data?.imageUrl);
+  const isConnectedToSingleFrameRepaint = edges.some((e: any) => {
+    if (e.source !== id) return false;
+    const targetNode = nodes.find((n: any) => n.id === e.target);
+    return targetNode?.type === 'aiGenNode' && targetNode?.data?.type === 'singleFrameRepaint';
+  });
+  const singleFrameRole = inferSingleFrameReferenceRole({ data });
 
   const handleAction = (action: string, payload?: any) => {
     setActiveDropdown(null);
@@ -563,6 +867,7 @@ const ImageNode = ({ data, id, selected }: any) => {
   };
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    setImageLoadFailed(false);
     const { naturalWidth, naturalHeight } = e.currentTarget;
     if (naturalWidth && naturalHeight && data.aspectRatioLockedFor !== data.imageUrl) {
       const node = getNode(id);
@@ -596,6 +901,18 @@ const ImageNode = ({ data, id, selected }: any) => {
         }
       }
     }
+  };
+
+  const handleNodeImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const image = e.currentTarget;
+    const originalUrl = image.dataset.originalSrc || String(data.imageUrl || image.src || '');
+    if (/^https?:\/\//i.test(originalUrl) && image.dataset.proxyFallback !== 'true') {
+      image.dataset.proxyFallback = 'true';
+      setImageUsingProxy(true);
+      image.src = getMediaProxyUrl(originalUrl);
+      return;
+    }
+    setImageLoadFailed(true);
   };
 
   return (
@@ -684,6 +1001,27 @@ const ImageNode = ({ data, id, selected }: any) => {
       </NodeToolbar>
       
       <div className={`${nodeBg} border-[1.5px] ${selected ? selectedBorder : defaultBorder} rounded-2xl p-0 shadow-sm hover:shadow-[0_0_15px_rgba(0,188,212,0.15)] transition-shadow w-full h-full flex flex-col relative group`}>
+        {isConnectedToSingleFrameRepaint && (
+          <div
+            className="absolute -top-11 left-28 z-[120] nodrag nowheel flex items-center rounded-xl border border-[#00bcd4]/35 bg-[#101417]/95 px-1.5 py-1.5 shadow-[0_0_24px_rgba(0,188,212,0.18)] backdrop-blur-xl"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            title="仅在连接到单帧重绘功能节点时显示"
+          >
+            <select
+              value={singleFrameRole}
+              onChange={(e) => updateNodeData(id, {
+                ...data,
+                singleFrameReferenceRole: e.target.value as SingleFrameReferenceRole
+              })}
+              className="bg-[#191b1f] border border-zinc-700 rounded-lg px-2 py-1 text-[11px] text-zinc-100 outline-none hover:border-[#00bcd4]/60"
+            >
+              {Object.entries(singleFrameRoleLabels).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         
         <FloatingPlusHandle type="target" position={Position.Left} title="拖入连接到图片节点" />
         
@@ -707,7 +1045,7 @@ const ImageNode = ({ data, id, selected }: any) => {
         )}
         
         {/* Right '+' Connection Handle: click opens quick add, drag creates edge */}
-        <div className={`absolute top-0 bottom-0 -right-16 w-16 z-40 transition-opacity flex items-center justify-center ${showAddMenu ? 'opacity-100' : 'opacity-0 hover:opacity-100'}`}>
+        <div className={`absolute top-0 bottom-0 -right-10 w-12 z-40 transition-opacity flex items-center justify-center ${showAddMenu ? 'opacity-100' : 'opacity-0 hover:opacity-100'}`}>
            <Handle
              type="source"
              position={Position.Right}
@@ -741,10 +1079,36 @@ const ImageNode = ({ data, id, selected }: any) => {
           <div className="flex-1 rounded-2xl overflow-hidden relative group/img bg-transparent m-1 flex flex-col justify-center">
             <img 
               src={data.imageUrl || undefined} 
+              data-original-src={data.imageUrl || undefined}
               onLoad={handleImageLoad}
+              onError={handleNodeImageError}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (imageLoadFailed || data.isGenerating) return;
+                if (!selected) {
+                  setNodes((nds) => nds.map((node) => ({ ...node, selected: node.id === id })));
+                  return;
+                }
+                setIsPreviewOpen(true);
+              }}
+              referrerPolicy="no-referrer"
               alt="Node content" 
-              className={`w-full h-full object-contain block ${data.rotation ? 'rotate-90 transition-transform' : ''}`} 
+              className={`w-full h-full object-contain block cursor-zoom-in ${data.rotation ? 'rotate-90 transition-transform' : ''}`} 
             />
+            {imageUsingProxy && !imageLoadFailed && (
+              <div className="absolute left-3 bottom-3 z-10 rounded-full border border-[#00bcd4]/30 bg-black/55 px-2 py-1 text-[10px] text-[#8befff] backdrop-blur">
+                代理加载
+              </div>
+            )}
+            {imageLoadFailed && (
+              <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#18191c]/95 px-6 text-center">
+                <ImageIcon size={34} className="mb-3 text-zinc-500" />
+                <div className="text-sm font-medium text-zinc-200">图片链接暂时无法显示</div>
+                <div className="mt-2 max-w-[260px] text-xs leading-relaxed text-zinc-500">
+                  可能是第三方临时链接过期、防盗链，或 TOS 转存未成功。请重新生成，或确认服务器已开启 ASSET_INGEST_TO_TOS。
+                </div>
+              </div>
+            )}
             <button onClick={(e) => { e.stopPropagation(); if(data.onAction) data.onAction(id, 'download'); }} className="absolute top-3 right-3 p-2 bg-black/60 hover:bg-black/80 text-white rounded-lg opacity-0 group-hover/img:opacity-100 transition-opacity z-10">
                <Upload size={16} />
             </button>
@@ -952,7 +1316,7 @@ const ImageNode = ({ data, id, selected }: any) => {
                <textarea 
                  ref={textareaRef}
                  className={`w-full text-sm py-2 px-3 bg-transparent border-none focus:outline-none resize-y text-zinc-300 placeholder-zinc-500 nodrag nopan nowheel font-medium selection:bg-purple-500/30 custom-scrollbar pb-6 ${isExpanded ? 'min-h-[200px]' : 'min-h-[60px]'}`}
-                 placeholder="描述你想要生成的画面内容，@引用素材"
+                 placeholder="描述视频内容，可用 @图片1 / @视频1 引用连入素材"
                  value={prompt}
                  onMouseDown={e => e.stopPropagation()}
                  onKeyDown={e => e.stopPropagation()}
@@ -985,10 +1349,10 @@ const ImageNode = ({ data, id, selected }: any) => {
                      className="absolute bottom-[calc(100%+8px)] left-0 w-[200px] bg-[#1E1E1E] border border-zinc-700/80 rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] py-2 z-50 flex flex-col"
                      onClick={(e) => e.stopPropagation()}
                    >
-                     {['KONGLONG Image', 'KONGLONG Banana 2', 'KONGLONG Banana pro', 'KONGLONG MJ'].map(m => (
+                     {['KONGLONG Image', 'KONGLONG Banana 2', 'KONGLONG Banana pro'].map(m => (
                        <button
                          key={m}
-                         onClick={(e) => { e.stopPropagation(); setModel(m); setShowModelMenu(false); }}
+                         onClick={(e) => { e.stopPropagation(); setModel(m); persistGenerationOptions({ uiModel: m, model: m }); setShowModelMenu(false); }}
                          className={`flex items-center gap-2 px-4 py-2 text-xs transition-colors text-left ${model === m ? 'bg-zinc-800 text-white font-medium' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300'}`}
                        >
                          {m}
@@ -1019,7 +1383,13 @@ const ImageNode = ({ data, id, selected }: any) => {
                            return (
                              <button 
                                key={res}
-                               onClick={(e) => { e.stopPropagation(); if (!isUnsupported) setResolution(res); }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!isUnsupported) {
+                                  setResolution(res);
+                                  persistGenerationOptions({ resolution: res });
+                                }
+                              }}
                                disabled={isUnsupported}
                                className={`py-1.5 text-xs rounded-lg border transition-colors ${
                                  isUnsupported ? 'border-zinc-800 text-zinc-600 bg-zinc-900/50 cursor-not-allowed' :
@@ -1068,7 +1438,11 @@ const ImageNode = ({ data, id, selected }: any) => {
                            return (
                              <button
                                key={ratio.label}
-                               onClick={(e) => { e.stopPropagation(); setAspectRatio(ratio.label); }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAspectRatio(ratio.label);
+                                persistGenerationOptions({ aspectRatio: ratio.label, requestedAspectRatio: ratio.label });
+                              }}
                                className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all ${isSelected ? 'border-zinc-500 bg-white/5 shadow-[0_0_12px_rgba(255,255,255,0.15)] text-white' : 'border-zinc-800/50 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-300'}`}
                              >
                                <div className="h-6 flex items-center justify-center mb-1">
@@ -1106,6 +1480,24 @@ const ImageNode = ({ data, id, selected }: any) => {
                >
                  <Languages size={14} />
                </button>
+               <label
+                 className={`w-4 h-4 rounded-[5px] border flex items-center justify-center cursor-pointer transition-colors ${characterSheetMode ? 'border-[#00bcd4] bg-[#00bcd4]/20 text-[#00e5ff]' : 'border-zinc-600 bg-zinc-900/60 text-transparent hover:border-zinc-400'}`}
+                 title="角色三视图"
+                 onClick={(e) => e.stopPropagation()}
+                 onMouseDown={(e) => e.stopPropagation()}
+               >
+                 <input
+                   type="checkbox"
+                   checked={characterSheetMode}
+                   className="sr-only"
+                   onChange={(e) => {
+                     const checked = e.target.checked;
+                     setCharacterSheetMode(checked);
+                     persistGenerationOptions({ characterSheetMode: checked });
+                   }}
+                 />
+                 <Check size={11} strokeWidth={3} />
+               </label>
                <button className="text-zinc-400 hover:text-white"><Settings2 size={14} /></button>
                
                <div className="relative">
@@ -1117,7 +1509,12 @@ const ImageNode = ({ data, id, selected }: any) => {
                      {[1, 2, 4].map(num => (
                        <button
                          key={num}
-                         onClick={(e) => { e.stopPropagation(); setImageCount(num); setShowCountMenu(false); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setImageCount(num);
+                          persistGenerationOptions({ imageCount: num });
+                          setShowCountMenu(false);
+                        }}
                          className={`px-4 py-1.5 text-xs text-left transition-colors ${imageCount === num ? 'bg-zinc-800 text-[#00bcd4]' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-white'}`}
                        >
                          {num}张
@@ -1129,7 +1526,13 @@ const ImageNode = ({ data, id, selected }: any) => {
                
                <button 
                  className={`w-8 h-8 rounded-full ${data.isGenerating ? 'bg-[#00bcd4]/20' : 'bg-zinc-600 hover:bg-[#00bcd4]'} text-white flex items-center justify-center transition-all shadow-lg ml-1 relative`}
-                 onClick={(e) => { e.stopPropagation(); if(!data.isGenerating && data.onGenerate) data.onGenerate(id, { aspectRatio, resolution, imageCount, stylePreset, uiModel: model }); }}
+                 onClick={(e) => {
+                   e.stopPropagation();
+                   if(!data.isGenerating && data.onGenerate) {
+                     persistGenerationOptions({ aspectRatio, requestedAspectRatio: aspectRatio, resolution, imageCount, stylePreset, uiModel: model, model, characterSheetMode });
+                     data.onGenerate(id, { aspectRatio, resolution, imageCount, stylePreset, uiModel: model, characterSheetMode });
+                   }
+                 }}
                  disabled={data.isGenerating}
                >
                  {data.isGenerating ? (
@@ -1151,7 +1554,15 @@ const ImageNode = ({ data, id, selected }: any) => {
           <button className="absolute top-6 right-6 p-2 bg-zinc-800 text-white rounded-xl hover:bg-zinc-700">
             <X size={20} />
           </button>
-          <img src={data.imageUrl || undefined} alt="Preview" className="max-w-[90vw] max-h-[90vh] object-contain rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
+          <img
+            src={data.imageUrl || undefined}
+            data-original-src={data.imageUrl || undefined}
+            onError={fallbackImageToProxy}
+            referrerPolicy="no-referrer"
+            alt="Preview"
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-xl shadow-2xl cursor-zoom-out"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>,
         document.body
       )}
@@ -1322,6 +1733,8 @@ const CameraMovementItem = ({ cam, prompt, setPrompt, updateNodeData, id, data, 
 
 const VideoNode = ({ data, id, selected }: any) => {
   const { updateNodeData, getNode, getNodes, getEdges, setNodes } = useReactFlow();
+  const flowNodes = useNodes();
+  const flowEdges = useEdges();
   const [prompt, setPrompt] = useState(data.prompt || "");
   const [loading, setLoading] = useState(data.isGenerating || false);
   const [progressMsg, setProgressMsg] = useState(data.progressMsg || "");
@@ -1332,6 +1745,7 @@ const VideoNode = ({ data, id, selected }: any) => {
   const [resolution, setResolution] = useState(data.resolution || '720P');
   const [duration, setDuration] = useState(data.duration || 15);
   const [audioEnabled, setAudioEnabled] = useState(data.audioEnabled !== undefined ? data.audioEnabled : true);
+  const [cleanOutputConstraints, setCleanOutputConstraints] = useState(!!data.cleanOutputConstraints);
   const [videoModel, setVideoModel] = useState(data.videoModel || 'Seedance 2.0 VIP');
   const [showVideoModelMenu, setShowVideoModelMenu] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1342,6 +1756,59 @@ const VideoNode = ({ data, id, selected }: any) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showReferenceMenu, setShowReferenceMenu] = useState(false);
+
+  useEffect(() => {
+    setLoading(!!data.isGenerating);
+    setProgressMsg(data.progressMsg || "");
+  }, [data.isGenerating, data.progressMsg]);
+
+  const connectedReferences = React.useMemo(() => {
+    let imageIndex = 0;
+    let videoIndex = 0;
+    let audioIndex = 0;
+    return flowEdges
+      .filter(edge => edge.target === id)
+      .flatMap(edge => {
+        const node = flowNodes.find(n => n.id === edge.source) as any;
+        if (!node) return [];
+        const title = node.data?.title || node.data?.label || '上游素材';
+        const items: Array<{ label: string; title: string; type: 'image' | 'video' | 'audio'; url: string }> = [];
+        if (node.data?.imageUrl) {
+          imageIndex += 1;
+          items.push({ label: `@图片${imageIndex}`, title, type: 'image', url: node.data.imageUrl });
+        }
+        if (node.data?.videoUrl) {
+          videoIndex += 1;
+          items.push({ label: `@视频${videoIndex}`, title, type: 'video', url: node.data.videoUrl });
+        }
+        if (node.data?.audioUrl) {
+          audioIndex += 1;
+          items.push({ label: `@音频${audioIndex}`, title, type: 'audio', url: node.data.audioUrl });
+        }
+        return items;
+      })
+      .slice(0, 8);
+  }, [flowEdges, flowNodes, id]);
+
+  const insertReferenceMention = (label: string) => {
+    const textarea = textareaRef.current;
+    const cursor = textarea?.selectionStart ?? prompt.length;
+    const before = prompt.slice(0, cursor);
+    const after = prompt.slice(cursor);
+    const atIndex = before.lastIndexOf('@');
+    const nextPrompt = atIndex >= 0
+      ? `${before.slice(0, atIndex)}${label} ${after}`
+      : `${before}${label} ${after}`;
+    const nextCursor = (atIndex >= 0 ? atIndex : before.length) + label.length + 1;
+    setPrompt(nextPrompt);
+    updateNodeData(id, { prompt: nextPrompt });
+    setShowReferenceMenu(false);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
 
   React.useEffect(() => {
     const node = getNodes().find(n => n.id === id);
@@ -1359,6 +1826,7 @@ const VideoNode = ({ data, id, selected }: any) => {
       setShowCameraMenu(false);
       setShowVideoModelMenu(false);
       setShowFrameMenu(false);
+      setShowReferenceMenu(false);
     };
     window.addEventListener('click', handleClickOutside);
     return () => window.removeEventListener('click', handleClickOutside);
@@ -1366,26 +1834,15 @@ const VideoNode = ({ data, id, selected }: any) => {
 
   const handleGenerate = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (loading || data.isGenerating) return;
     if (!prompt.trim()) return alert("请输入提示词");
     
     const queueProjectId = data.projectId || 'local-project';
-    let queueTaskId: string | null = null;
     setLoading(true);
     setProgressMsg("正在连接视频生成服务...");
     updateNodeData(id, { isGenerating: true, progressMsg: "正在连接视频生成服务...", activeTab });
     
     try {
-      const queueTask = await taskQueueManager.enqueueTask(queueProjectId, 'video_generation', {
-        prompt,
-        ratio: aspectRatio,
-        duration,
-        resolution,
-        model: videoModel,
-        activeTab
-      }, id);
-      queueTaskId = queueTask.id;
-      await taskQueueManager.updateTaskStatus(queueProjectId, queueTask.id, 'running');
-
       // 收集所有连入当前视频节点的图片/视频，作为“全能参考”素材。
       const edges = getEdges();
       const nodes = getNodes();
@@ -1394,9 +1851,25 @@ const VideoNode = ({ data, id, selected }: any) => {
       const referenceMedia = referenceNodes
         .flatMap((node: any) => [
           node?.data?.imageUrl ? { url: node.data.imageUrl, type: 'image' as const } : null,
-          node?.data?.videoUrl ? { url: node.data.videoUrl, type: 'video' as const } : null
+          node?.data?.videoUrl ? { url: node.data.videoUrl, type: 'video' as const } : null,
+          node?.data?.audioUrl ? { url: node.data.audioUrl, type: 'audio' as const } : null
         ])
-        .filter((item): item is { url: string; type: 'image' | 'video' } => !!item && typeof item.url === 'string');
+        .filter((item): item is { url: string; type: 'image' | 'video' | 'audio' } => !!item && typeof item.url === 'string')
+        .slice(0, 8);
+      const referenceRoles = referenceNodes
+        .flatMap((node: any) => [
+          node?.data?.imageUrl ? { node, type: 'image' as const } : null,
+          node?.data?.videoUrl ? { node, type: 'video' as const } : null,
+          node?.data?.audioUrl ? { node, type: 'audio' as const } : null
+        ])
+        .filter((item): item is { node: any; type: 'image' | 'video' | 'audio' } => !!item)
+        .slice(0, 8)
+        .map((item, index, all) => item.type === 'video'
+          ? 'style'
+          : item.type === 'audio'
+            ? 'voice'
+          : inferVideoReferenceRoleFromNode(item.node, index, all.length, activeTab)
+        );
 
       const { ensurePublicMediaUrl } = await import('../services/mediaUploadService');
       const referenceMediaUrls: string[] = [];
@@ -1422,7 +1895,11 @@ const VideoNode = ({ data, id, selected }: any) => {
           updateNodeData(id, { progressMsg: msg });
         },
         {
+          workspaceProjectId: queueProjectId,
+          createdBy: localStorage.getItem('dino_currentUser') || 'system',
           imageUrls: referenceMediaUrls,
+          referenceRoles,
+          cleanOutputConstraints,
           ratio: aspectRatio,
           duration,
           resolution,
@@ -1430,25 +1907,32 @@ const VideoNode = ({ data, id, selected }: any) => {
           model: videoModel,
           metadata: {
             activeTab,
-            supportsAtReference: true
+            supportsAtReference: true,
+            capability: 'multi_reference_video',
+            cleanOutputConstraints,
+            referenceRoles,
+            nodeId: id
           }
         }
       );
       
       setLoading(false);
       setProgressMsg("");
-      updateNodeData(id, { videoUrl: finalVideoUrl, isGenerating: false, progressMsg: "", prompt, activeTab, aspectRatio, resolution, duration, audioEnabled, videoModel });
-      if (queueTaskId) {
-        await taskQueueManager.updateTaskStatus(queueProjectId, queueTaskId, 'completed', { url: finalVideoUrl });
-      }
+      updateNodeData(id, { videoUrl: finalVideoUrl, isGenerating: false, progressMsg: "", prompt, activeTab, aspectRatio, resolution, duration, audioEnabled, videoModel, cleanOutputConstraints });
     } catch (err: any) {
-      alert("视频生成失败：" + err.message);
+      const message = String(err?.message || '未知错误');
+      const isTransient = /502|503|504|Bad Gateway|fetch failed|网络|超时|暂时|仍在|仍可能|后台处理中|读取不稳定|排队|处理中/i.test(message);
+      if (isTransient) {
+        const msg = "视频仍在服务商后台处理中，请稍后查看任务队列。";
+        setLoading(true);
+        setProgressMsg(msg);
+        updateNodeData(id, { isGenerating: true, progressMsg: msg, activeTab, prompt, aspectRatio, resolution, duration, audioEnabled, videoModel, cleanOutputConstraints });
+        return;
+      }
+      alert("视频生成失败：" + message);
       setLoading(false);
       setProgressMsg("");
-      updateNodeData(id, { isGenerating: false, progressMsg: "" });
-      if (queueTaskId) {
-        await taskQueueManager.updateTaskStatus(queueProjectId, queueTaskId, 'failed', undefined, err?.message || '未知错误');
-      }
+      updateNodeData(id, { isGenerating: false, progressMsg: "", generationError: message });
     }
   };
 
@@ -1488,7 +1972,13 @@ const VideoNode = ({ data, id, selected }: any) => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('浏览器无法创建截帧画布');
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageUrl = canvas.toDataURL('image/png');
+      const dataUrl = canvas.toDataURL('image/png');
+      let imageUrl = dataUrl;
+      try {
+        imageUrl = await ensurePublicMediaUrl(dataUrl, 'image', 0);
+      } catch (error) {
+        console.warn('Captured frame upload to public storage failed, use local preview only:', error);
+      }
 
       if (mode !== 'current') {
         try { await seekTo(originalTime); } catch {}
@@ -1565,7 +2055,16 @@ const VideoNode = ({ data, id, selected }: any) => {
             </div>
           ) : data.videoUrl ? (
             <>
-              <video ref={videoRef} src={data.videoUrl || undefined} controls crossOrigin="anonymous" className="w-full h-full object-contain block bg-black nodrag" autoPlay loop />
+              <video
+                ref={videoRef}
+                src={data.videoUrl || undefined}
+                data-original-src={data.videoUrl || undefined}
+                controls
+                crossOrigin="anonymous"
+                onError={fallbackVideoToProxy}
+                className="w-full h-full object-contain block bg-black nodrag"
+                autoPlay
+              />
               <div className="absolute top-3 right-3 z-20">
                 <button
                   onClick={(e) => { e.stopPropagation(); setShowFrameMenu(!showFrameMenu); }}
@@ -1659,6 +2158,39 @@ const VideoNode = ({ data, id, selected }: any) => {
                  </button>
              </div>
 
+             {connectedReferences.length > 0 && (
+               <div className="mb-4 rounded-xl border border-zinc-700/60 bg-zinc-900/30 p-2">
+                 <div className="mb-2 flex items-center justify-between text-[10px] text-zinc-500">
+                   <span>连入参考素材</span>
+                   <span>提示词输入 @ 可快速引用</span>
+                 </div>
+                 <div className="flex flex-wrap gap-2">
+                   {connectedReferences.map((ref) => (
+                     <button
+                       key={`${ref.label}-${ref.url}`}
+                       onClick={(e) => { e.stopPropagation(); insertReferenceMention(ref.label); }}
+                       className="group flex items-center gap-2 rounded-lg border border-zinc-700/70 bg-[#151515] px-2 py-1.5 text-left hover:border-[#00bcd4]/60 hover:bg-[#00bcd4]/10 transition-colors"
+                       title={`插入 ${ref.label}`}
+                     >
+                       <div className="h-9 w-12 overflow-hidden rounded-md border border-zinc-700/80 bg-black/40 flex items-center justify-center shrink-0">
+                         {ref.type === 'image' ? (
+                           <img src={ref.url} data-original-src={ref.url} onError={fallbackImageToProxy} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+                         ) : ref.type === 'video' ? (
+                           <Video size={16} className="text-zinc-400 group-hover:text-[#00e5ff]" />
+                         ) : (
+                           <AudioLines size={16} className="text-zinc-400 group-hover:text-[#00e5ff]" />
+                         )}
+                       </div>
+                       <div className="min-w-0">
+                         <div className="text-xs font-semibold text-zinc-200 group-hover:text-white">{ref.label}</div>
+                         <div className="max-w-[120px] truncate text-[10px] text-zinc-500">{ref.title}</div>
+                       </div>
+                     </button>
+                   ))}
+                 </div>
+               </div>
+             )}
+
              {/* Text Area */}
              <div className={`relative bg-zinc-800/50 border border-zinc-700/50 rounded-xl mb-6 group/textarea ${isExpanded ? 'z-50 shadow-2xl border-[#00bcd4]/50' : 'focus-within:border-zinc-500 focus-within:bg-zinc-800 transition-colors'}`}>
                {isExpanded && (
@@ -1688,11 +2220,15 @@ const VideoNode = ({ data, id, selected }: any) => {
                  <textarea
                     ref={textareaRef}
                     className={`w-full text-sm py-2 px-3 bg-transparent border-none focus:outline-none resize-y text-zinc-300 placeholder-zinc-500 nodrag nopan nowheel font-medium selection:bg-purple-500/30 custom-scrollbar pb-6 ${isExpanded ? 'min-h-[200px]' : 'min-h-[60px]'}`}
-                    placeholder="描述你想要生成的画面内容，@引用素材"
+                    placeholder="描述视频内容，可用 @图片1 / @视频1 / @音频1 引用连入素材"
                     value={prompt}
                     onChange={(e) => { 
-                      setPrompt(e.target.value); 
-                      updateNodeData(id, { prompt: e.target.value });
+                      const nextPrompt = e.target.value;
+                      const cursor = e.target.selectionStart ?? nextPrompt.length;
+                      const beforeCursor = nextPrompt.slice(0, cursor);
+                      setPrompt(nextPrompt); 
+                      updateNodeData(id, { prompt: nextPrompt });
+                      setShowReferenceMenu(/@$/.test(beforeCursor) && connectedReferences.length > 0);
                       if (isExpanded && textareaRef.current) {
                         textareaRef.current.style.height = 'auto';
                         textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
@@ -1700,8 +2236,43 @@ const VideoNode = ({ data, id, selected }: any) => {
                     }}
                     disabled={loading}
                     onMouseDown={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === 'Escape') setShowReferenceMenu(false);
+                    }}
                  />
+                 {showReferenceMenu && connectedReferences.length > 0 && (
+                   <div
+                     className="absolute left-3 top-[calc(100%-6px)] z-[120] w-72 rounded-xl border border-zinc-700/80 bg-[#171717]/98 shadow-[0_14px_40px_rgba(0,0,0,0.75)] p-2"
+                     onMouseDown={(e) => e.stopPropagation()}
+                     onClick={(e) => e.stopPropagation()}
+                   >
+                     <div className="px-2 pb-1 text-[10px] text-zinc-500">选择要引用的上游素材</div>
+                     <div className="max-h-56 overflow-y-auto custom-scrollbar space-y-1">
+                       {connectedReferences.map((ref) => (
+                         <button
+                           key={`mention-${ref.label}-${ref.url}`}
+                           onClick={() => insertReferenceMention(ref.label)}
+                           className="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-zinc-800/90 transition-colors"
+                         >
+                           <div className="h-8 w-10 overflow-hidden rounded-md border border-zinc-700/80 bg-black/40 flex items-center justify-center shrink-0">
+                             {ref.type === 'image' ? (
+                               <img src={ref.url} data-original-src={ref.url} onError={fallbackImageToProxy} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+                             ) : ref.type === 'video' ? (
+                               <Video size={15} className="text-zinc-400" />
+                             ) : (
+                               <AudioLines size={15} className="text-zinc-400" />
+                             )}
+                           </div>
+                           <div className="min-w-0 flex-1">
+                             <div className="text-xs font-semibold text-zinc-200">{ref.label}</div>
+                             <div className="truncate text-[10px] text-zinc-500">{ref.title}</div>
+                           </div>
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+                 )}
                </div>
              </div>
 
@@ -1846,6 +2417,24 @@ const VideoNode = ({ data, id, selected }: any) => {
                     <button className="text-zinc-400 hover:text-white p-1 transition-colors" title="翻译">
                         <Languages size={15} />
                     </button>
+                    <label
+                      className={`w-4 h-4 rounded-[5px] border flex items-center justify-center cursor-pointer transition-colors ${cleanOutputConstraints ? 'border-[#00bcd4] bg-[#00bcd4]/20 text-[#00e5ff]' : 'border-zinc-600 bg-zinc-900/60 text-transparent hover:border-zinc-400'}`}
+                      title="无字幕 / 无水印 / 无Logo"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={cleanOutputConstraints}
+                        className="sr-only"
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setCleanOutputConstraints(checked);
+                          updateNodeData(id, { cleanOutputConstraints: checked });
+                        }}
+                      />
+                      <Check size={11} strokeWidth={3} />
+                    </label>
                     <button className="text-zinc-400 hover:text-white p-1 transition-colors" title="设置">
                         <Settings2 size={15} />
                     </button>
@@ -2532,11 +3121,166 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
   const [toast, setToast] = useState<{ message: string, visible: boolean }>({ message: '', visible: false });
   const [globalProgress, setGlobalProgress] = useState<{ visible: boolean, text: string, progress: number }>({ visible: false, text: '', progress: 0 });
   const [activeSidebarPopover, setActiveSidebarPopover] = useState<'add' | 'assets' | 'team-assets' | 'script' | null>(null);
+  const [scriptPanelSize, setScriptPanelSize] = useState(() => {
+    try {
+      const stored = localStorage.getItem(`script_panel_size_${projectId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return { width: Math.min(Math.max(Number(parsed.width) || 420, 360), 860), height: Math.min(Math.max(Number(parsed.height) || 600, 460), 900) };
+      }
+    } catch {}
+    return { width: 420, height: 600 };
+  });
   const [assetsTab, setAssetsTab] = useState<'materials' | 'entities'>('materials');
   const [materialsCategory, setMaterialsCategory] = useState('全部');
   const [entitiesCategory, setEntitiesCategory] = useState('全部');
   const [myEntities, setMyEntities] = useState<any[]>([]);
   const [entityCategoryMenuId, setEntityCategoryMenuId] = useState<string | null>(null);
+
+  const handleScriptPanelResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = scriptPanelSize.width;
+    const startHeight = scriptPanelSize.height;
+
+    const onMove = (moveEvent: MouseEvent) => {
+      const maxWidth = Math.min(860, Math.max(420, window.innerWidth - 120));
+      const maxHeight = Math.min(900, Math.max(520, window.innerHeight - 80));
+      const nextSize = {
+        width: Math.min(Math.max(startWidth + moveEvent.clientX - startX, 360), maxWidth),
+        height: Math.min(Math.max(startHeight + moveEvent.clientY - startY, 460), maxHeight),
+      };
+      setScriptPanelSize(nextSize);
+      try { localStorage.setItem(`script_panel_size_${projectId}`, JSON.stringify(nextSize)); } catch {}
+    };
+
+    const onUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+
+    document.body.style.cursor = 'nwse-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [projectId, scriptPanelSize.height, scriptPanelSize.width]);
+
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`canvas_my_entities_${projectId}`) || localStorage.getItem('canvas_my_entities');
+      if (stored) setMyEntities(JSON.parse(stored));
+    } catch (error) {
+      console.warn('Failed to load my entities:', error);
+    }
+  }, [projectId]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(`canvas_my_entities_${projectId}`, JSON.stringify(myEntities));
+      localStorage.setItem('canvas_my_entities', JSON.stringify(myEntities));
+    } catch (error) {
+      console.warn('Failed to save my entities:', error);
+    }
+  }, [projectId, myEntities]);
+
+  React.useEffect(() => {
+    let disposed = false;
+
+    const syncTerminalGenerationTasksToNodes = async () => {
+      try {
+        const projectIds = Array.from(new Set([projectId, 'local-project'].filter(Boolean)));
+        const taskGroups = await Promise.all(projectIds.map((id) => taskQueueManager.getTasks(id)));
+        const serverTaskGroups = await Promise.all(projectIds.map((id) => fetchProjectGenerationTasks(id)));
+        const latestTaskByNodeId = new Map<string, any>();
+        const serverNodeKeys = new Set<string>();
+
+        for (const task of serverTaskGroups.flat()) {
+          if (!task?.nodeId || !['image_generation', 'video_generation'].includes(task.type)) continue;
+          serverNodeKeys.add(task.nodeId + ':' + task.type);
+          const previous = latestTaskByNodeId.get(task.nodeId);
+          const taskTime = new Date(task.updatedAt || task.createdAt || 0).getTime();
+          const previousTime = previous ? new Date(previous.updatedAt || previous.createdAt || 0).getTime() : -1;
+          if (!previous || taskTime >= previousTime) {
+            latestTaskByNodeId.set(task.nodeId, task);
+          }
+        }
+
+        for (const task of taskGroups.flat()) {
+          if (!task?.nodeId || !['image_generation', 'video_generation'].includes(task.type)) continue;
+          if (serverNodeKeys.has(task.nodeId + ':' + task.type)) continue;
+          const previous = latestTaskByNodeId.get(task.nodeId);
+          const taskTime = new Date(task.updatedAt || task.createdAt || 0).getTime();
+          const previousTime = previous ? new Date(previous.updatedAt || previous.createdAt || 0).getTime() : -1;
+          if (!previous || taskTime >= previousTime) {
+            latestTaskByNodeId.set(task.nodeId, task);
+          }
+        }
+
+        if (disposed || latestTaskByNodeId.size === 0) return;
+
+        setNodes((currentNodes: any[]) => currentNodes.map((node: any) => {
+          const task = latestTaskByNodeId.get(node.id);
+          if (!task) return node;
+          const status = normalizeGenerationStatus(task.status);
+          const isGenerationNode = ['imageNode', 'videoNode'].includes(node.type);
+          if (!isGenerationNode) return node;
+
+          if (status === 'running') {
+            const progressMsg = node.type === 'videoNode'
+              ? '视频仍在服务商后台生成，请稍后查看任务队列。'
+              : '图片仍在服务商后台生成，请稍后查看任务队列。';
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                isGenerating: true,
+                progress: node.data?.progress || 92,
+                progressMsg: node.data?.progressMsg || progressMsg,
+                generatingText: node.data?.generatingText || '',
+                generationError: undefined
+              }
+            };
+          }
+
+          if (!node?.data?.isGenerating && !['completed', 'failed'].includes(status)) return node;
+          if (!['completed', 'failed'].includes(status)) return node;
+
+          const nextData: any = {
+            ...node.data,
+            isGenerating: false,
+            progress: undefined,
+            progressMsg: '',
+            generatingText: '',
+          };
+
+          if (status === 'failed') {
+            nextData.generationError = task.error || '生成失败，请查看任务队列失败原因。';
+            return { ...node, data: nextData };
+          }
+
+          const resultUrl = extractGeneratedMediaUrl(task.result);
+          nextData.generationError = undefined;
+          if (resultUrl && node.type === 'imageNode') nextData.imageUrl = resultUrl;
+          if (resultUrl && node.type === 'videoNode') nextData.videoUrl = resultUrl;
+          return { ...node, data: nextData };
+        }));
+      } catch (error) {
+        console.warn('Failed to sync terminal generation tasks to nodes:', error);
+      }
+    };
+
+    syncTerminalGenerationTasksToNodes();
+    const timer = window.setInterval(syncTerminalGenerationTasksToNodes, 3000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [projectId, setNodes]);
+
   const [activeRightPanel, setActiveRightPanel] = useState<{ type: MediaCapability, nodeId: string, initialValues?: Record<string, any> } | null>(null);
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
   const [currentProjectName, setCurrentProjectName] = useState(projectName);
@@ -2564,11 +3308,37 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
 
     const currentNodes = Array.isArray(arg1) ? arg1 : nodes;
     const currentEdges = Array.isArray(arg2) ? arg2 : edges;
+    const slimNodes = currentNodes.map((node: any) => {
+      const data = node?.data || {};
+      const imageUrl = typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/') && data.imageUrl.length > 750_000
+        ? ''
+        : data.imageUrl;
+      const videoUrl = typeof data.videoUrl === 'string' && data.videoUrl.startsWith('data:video/') && data.videoUrl.length > 750_000
+        ? ''
+        : data.videoUrl;
+
+      return {
+        ...node,
+        data: {
+          ...data,
+          imageUrl,
+          videoUrl
+        }
+      };
+    });
     await canvasProjectPersistence.save(projectId, currentProjectName, {
-      nodes: currentNodes,
+      nodes: slimNodes,
       edges: currentEdges
     });
   }, [nodes, edges, projectId, currentProjectName, initialDataLoaded]);
+
+  const persistCanvasSoon = useCallback((delayMs = 120) => {
+    window.setTimeout(() => {
+      handleSaveProject(getNodes(), getEdges()).catch((error) => {
+        console.warn('Canvas quick persist failed:', error);
+      });
+    }, delayMs);
+  }, [handleSaveProject, getNodes, getEdges]);
 
   const [settings, setSettings] = useState<any>(null);
 
@@ -2598,7 +3368,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       const intervalMs = settings?.system?.autoSaveIntervalMs || 30000;
       const timer = setTimeout(() => {
         handleSaveProject(nodes, edges);
-      }, intervalMs < 1000 ? 1000 : 1000); // Keep debounce low or use interval? Actually using a simple debounce is fine here. Let's stick with 1.5s debounce for UI performance, but respect autoSave toggle.
+      }, Math.max(3000, Math.min(intervalMs, 10000)));
       return () => clearTimeout(timer);
     }
   }, [nodes, edges, handleSaveProject, initialDataLoaded, settings]);
@@ -2626,16 +3396,25 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     onBackToProjects();
   }, [onBackToProjects]);
 
-  const handleOpenGenerate = useCallback(async (nodeId: string, options?: { aspectRatio?: string, resolution?: string, imageCount?: number, stylePreset?: string, uiModel?: string }) => {
+  const handleOpenGenerate = useCallback(async (nodeId: string, options?: { aspectRatio?: string, resolution?: string, imageCount?: number, stylePreset?: string, uiModel?: string, characterSheetMode?: boolean }) => {
     const currentNodes = getNodes();
     const currentEdges = getEdges();
     const targetNode = currentNodes.find(n => n.id === nodeId);
-    const prompt = String(targetNode?.data?.prompt || '').trim();
+    const basePrompt = String(targetNode?.data?.prompt || '').trim();
+    const shouldUseCharacterSheet = !!(options?.characterSheetMode || targetNode?.data?.characterSheetMode);
+    const prompt = shouldUseCharacterSheet ? buildCharacterSheetPrompt(basePrompt, nodeId) : basePrompt;
     const upstreamImageUrls = currentEdges
       .filter(edge => edge.target === nodeId)
       .map(edge => currentNodes.find(n => n.id === edge.source))
       .filter(sourceNode => sourceNode?.type === 'imageNode' && sourceNode.data?.imageUrl)
       .map(sourceNode => sourceNode?.data?.imageUrl as string);
+    const selfImageUrl = targetNode?.type === 'imageNode' && targetNode.data?.imageUrl && !targetNode.data?.isGenerating
+      ? String(targetNode.data.imageUrl)
+      : '';
+    const rawReferenceImageUrls = Array.from(new Set([
+      selfImageUrl,
+      ...upstreamImageUrls
+    ].filter(Boolean)));
 
     if (!targetNode) return;
     if (!prompt) {
@@ -2651,76 +3430,110 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       )));
     };
 
-    let queueTaskId: string | null = null;
-
     try {
-      const queueTask = await taskQueueManager.enqueueTask(projectId, 'image_generation', {
-        prompt,
-        aspectRatio: options?.aspectRatio || '16:9',
-        resolution: options?.resolution || '2K',
-        uiModel: options?.uiModel,
-        referenceImages: upstreamImageUrls
-      }, nodeId);
-      queueTaskId = queueTask.id;
-      await taskQueueManager.updateTaskStatus(projectId, queueTask.id, 'running');
-
+      const generationAspectRatio = options?.aspectRatio || targetNode.data?.aspectRatio || targetNode.data?.requestedAspectRatio || '16:9';
+      const generationResolution = options?.resolution || targetNode.data?.resolution || '4K';
+      const generationModel = options?.uiModel || targetNode.data?.uiModel || targetNode.data?.model || 'KONGLONG Image';
+      const generationImageCount = options?.imageCount || targetNode.data?.imageCount || 1;
+      const referenceImageUrls = (await Promise.all(rawReferenceImageUrls.map(async (url, index) => {
+        try {
+          return await ensurePublicMediaUrl(url, 'image', index);
+        } catch {
+          return url;
+        }
+      }))).filter(Boolean);
+      const referenceInstruction = referenceImageUrls.length > 0
+        ? shouldUseCharacterSheet
+          ? '\n\n【参考图锁定】以参考图中的人物作为唯一角色来源，严格继承人物五官、脸型、发型、服装、体型、肤色和整体画风；不要凭空替换成其他人物。'
+          : '\n\n【图生图参考要求】严格以参考图作为原始图像/上游素材，保留主体身份、脸型、发型、服装、姿态、构图与整体风格；只根据提示词修改指定内容，不要生成无关新人物，不要替换成其他角色。'
+        : '';
+      const generationPrompt = `${prompt}${referenceInstruction}`;
       patchNodeData({
         isGenerating: true,
         progress: 8,
-        progressMsg: upstreamImageUrls.length > 0 ? '正在参考上游图片生成...' : '正在生成图片...',
-        prompt
-      });
-
-      const imageUrl = await runImageGeneration(
+        progressMsg: referenceImageUrls.length > 0 ? '正在参考图片生成...' : '正在生成图片...',
         prompt,
-        undefined,
-        undefined,
-        options?.aspectRatio || '16:9',
-        options?.resolution || '2K',
-        {
-          workspaceProjectId: projectId,
-          createdBy: currentUser || 'system',
-          uiModel: options?.uiModel,
-          referenceImages: upstreamImageUrls,
-          imageCount: options?.imageCount || 1
-        }
-      );
+        aspectRatio: generationAspectRatio,
+        requestedAspectRatio: generationAspectRatio,
+        resolution: generationResolution,
+        imageCount: generationImageCount,
+        uiModel: generationModel,
+        model: generationModel,
+        characterSheetMode: shouldUseCharacterSheet
+      });
+      const startedAt = Date.now();
+      const progressTimer = window.setInterval(() => {
+        const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        const nextProgress = Math.min(92, 8 + Math.floor(elapsedSeconds * 1.2));
+        patchNodeData({
+          isGenerating: true,
+          progress: nextProgress,
+          progressMsg: elapsedSeconds > 90
+            ? '图片仍在生成中，服务商返回较慢，请继续等待...'
+            : referenceImageUrls.length > 0
+              ? '正在参考图片生成...'
+              : '正在生成图片...'
+        });
+      }, 3000);
 
-      const requestedRatio = options?.aspectRatio || '16:9';
-      const [ratioX, ratioY] = requestedRatio.split(':').map(Number);
-      setNodes(nds => nds.map(node => {
-        if (node.id !== nodeId) return node;
-        const currentWidth = Number(node.style?.width || node.width || 320);
-        const nextHeight = Number.isFinite(ratioX) && Number.isFinite(ratioY) && ratioX > 0 && ratioY > 0
-          ? Math.round(currentWidth * (ratioY / ratioX))
-          : Number(node.style?.height || node.height || 320);
-        return {
-          ...node,
-          style: { ...node.style, width: currentWidth, height: nextHeight },
-          data: {
-            ...node.data,
-            imageUrl,
-            isGenerating: false,
-            progress: 100,
-            progressMsg: '',
-            aspectRatio: options?.aspectRatio,
-            resolution: options?.resolution,
-            imageCount: options?.imageCount,
-            stylePreset: options?.stylePreset,
-            uiModel: options?.uiModel,
-            requestedAspectRatio: requestedRatio
+      try {
+        const imageUrl = await runImageGeneration(
+          generationPrompt,
+          undefined,
+          undefined,
+          generationAspectRatio,
+          generationResolution,
+          {
+            workspaceProjectId: projectId,
+            createdBy: currentUser || 'system',
+            uiModel: generationModel,
+            referenceImages: referenceImageUrls,
+            imageCount: generationImageCount,
+            nodeId
           }
-        };
-      }));
-      if (queueTaskId) {
-        await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'completed', { url: imageUrl });
+        );
+
+        window.clearInterval(progressTimer);
+        const requestedRatio = generationAspectRatio;
+        const [ratioX, ratioY] = requestedRatio.split(':').map(Number);
+        setNodes(nds => nds.map(node => {
+          if (node.id !== nodeId) return node;
+          const currentWidth = Number(node.style?.width || node.width || 320);
+          const nextHeight = Number.isFinite(ratioX) && Number.isFinite(ratioY) && ratioX > 0 && ratioY > 0
+            ? Math.round(currentWidth * (ratioY / ratioX))
+            : Number(node.style?.height || node.height || 320);
+          return {
+            ...node,
+            style: { ...node.style, width: currentWidth, height: nextHeight },
+            data: {
+              ...node.data,
+              imageUrl,
+              isGenerating: false,
+              progress: 100,
+              progressMsg: '',
+              aspectRatio: generationAspectRatio,
+              resolution: generationResolution,
+              imageCount: generationImageCount,
+              stylePreset: options?.stylePreset,
+              uiModel: generationModel,
+              model: generationModel,
+              requestedAspectRatio: requestedRatio
+            }
+          };
+        }));
+        MediaHistoryService.addHistory({ type: 'image', url: imageUrl });
+        showToast(referenceImageUrls.length > 0 ? '参考图生成完成' : '图片生成完成');
+      } catch (err) {
+        window.clearInterval(progressTimer);
+        throw err;
       }
-      showToast(upstreamImageUrls.length > 0 ? '参考图生成完成' : '图片生成完成');
     } catch (err: any) {
-      patchNodeData({ isGenerating: false, progress: 0, progressMsg: '' });
-      if (queueTaskId) {
-        await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'failed', undefined, err?.message || '未知错误');
-      }
+      const message = String(err?.message || '未知错误');
+      const isStillProcessing = message.includes('仍在生成') || message.includes('后台处理中') || message.includes('读取不稳定');
+      patchNodeData(isStillProcessing
+        ? { isGenerating: true, progress: 92, progressMsg: '图片仍在服务商后台生成，请稍后查看任务队列。' }
+        : { isGenerating: false, progress: 0, progressMsg: '' }
+      );
       showToast(`图片生成失败：${err?.message || '未知错误'}`);
     }
   }, [getNodes, getEdges, setNodes, projectId, currentUser, showToast]);
@@ -2740,6 +3553,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
 
   const handleImageAction = useCallback((id: string, action: string, payload?: any) => {
     const currentNodes = getNodes();
+    const currentEdges = getEdges();
     const node = currentNodes.find(n => n.id === id);
     if (!node) return;
 
@@ -2766,11 +3580,13 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
 
     if (action === 'download') {
       if (node.data.imageUrl) {
-        const a = document.createElement('a');
-        a.href = node.data.imageUrl as string;
-        a.download = `image-${id}.png`;
-        a.click();
-        showToast('图片开始下载');
+        const ext = inferDownloadExtension(String(node.data.imageUrl), 'png');
+        triggerMediaDownload(String(node.data.imageUrl), `image-${id}.${ext}`)
+          .then(() => showToast('图片开始下载'))
+          .catch((err) => {
+            console.error(err);
+            showToast('下载失败：图片源不允许直接下载，请右键图片另存为');
+          });
       } else {
         showToast('无可用图片下载');
       }
@@ -2834,18 +3650,32 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       });
       const cellWidth = Math.floor(image.naturalWidth / gridSize);
       const cellHeight = Math.floor(image.naturalHeight / gridSize);
-      Array.from({ length: gridSize * gridSize }).forEach((_, index) => {
+      const splitJobs = Array.from({ length: gridSize * gridSize }).map(async (_, index) => {
         const col = index % gridSize;
         const row = Math.floor(index / gridSize);
         const canvas = document.createElement('canvas');
         canvas.width = cellWidth;
         canvas.height = cellHeight;
         const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        if (!ctx) return false;
         ctx.drawImage(image, col * cellWidth, row * cellHeight, cellWidth, cellHeight, 0, 0, cellWidth, cellHeight);
-        addDerivedImageNode(canvas.toDataURL('image/png'), `${gridSize * gridSize}宫格拆分 ${index + 1}`, index);
+        try {
+          const dataUrl = canvas.toDataURL('image/png');
+          const publicUrl = await ensurePublicMediaUrl(dataUrl, 'image', index);
+          addDerivedImageNode(publicUrl, `${gridSize * gridSize}宫格拆分 ${index + 1}`, index);
+          MediaHistoryService.addHistory({ type: 'image', url: publicUrl });
+          return true;
+        } catch (err) {
+          console.warn('Persist split grid cell failed:', err);
+          return false;
+        }
       });
-      showToast(`${gridSize * gridSize}宫格拆分完成`);
+      const results = await Promise.all(splitJobs);
+      const successCount = results.filter(Boolean).length;
+      showToast(successCount === gridSize * gridSize
+        ? `${gridSize * gridSize}宫格拆分完成`
+        : `宫格拆分完成 ${successCount}/${gridSize * gridSize}，失败项未写入本地大图，避免刷新后丢失或页面崩溃`
+      );
     };
 
     if (action === 'split-4' || action === 'split-9' || action === 'split-16') {
@@ -2858,6 +3688,50 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     const cameraText = payload
       ? `目标机位：水平环绕 ${payload.horizontal ?? 0}°，垂直俯仰 ${payload.vertical ?? 0}°，景别 ${['特写', '近景', '中景', '全景', '远景'][payload.zoom ?? 2] || '中景'}。`
       : '';
+
+    const buildSingleFrameReferences = () => {
+      const incomingReferenceNodes = currentEdges
+        .filter(edge => edge.target === id)
+        .map(edge => currentNodes.find(n => n.id === edge.source))
+        .filter(Boolean)
+        .map(sourceNode => ({
+          node: sourceNode,
+          url: getNodeImageUrl(sourceNode),
+          role: inferSingleFrameReferenceRole(sourceNode)
+        }))
+        .filter(item => item.url);
+
+      const characterRefs = incomingReferenceNodes.filter(item => item.role === 'character');
+      const qualitySceneRefs = incomingReferenceNodes.filter(item => item.role === 'quality_scene');
+      const explicitFrameRefs = incomingReferenceNodes.filter(item => item.role === 'frame');
+      const propRefs = incomingReferenceNodes.filter(item => item.role === 'prop');
+
+      const frameUrl = explicitFrameRefs[0]?.url || sourceImage;
+      const orderedUrls = [
+        ...characterRefs.map(item => item.url),
+        ...qualitySceneRefs.map(item => item.url),
+        frameUrl,
+        ...propRefs.map(item => item.url),
+      ].filter((url, index, arr) => !!url && arr.indexOf(url) === index);
+
+      const prompt = buildSingleFrameRedrawPrompt({
+        userPrompt,
+        hasCharacter: characterRefs.length > 0,
+        hasQualityScene: qualitySceneRefs.length > 0,
+        hasProps: propRefs.length > 0
+      });
+
+      return {
+        prompt,
+        referenceImages: orderedUrls,
+        summary: {
+          character: characterRefs.length,
+          qualityScene: qualitySceneRefs.length,
+          frame: frameUrl ? 1 : 0,
+          prop: propRefs.length
+        }
+      };
+    };
 
     const promptMap: Record<string, { title: string; prompt: string; ratio?: string; resolution?: string }> = {
       'multi-angle-gen': {
@@ -2902,7 +3776,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       },
       'hd-redraw': {
         title: '单帧重绘',
-        prompt: `以参考图为基础进行单帧重绘，保持主体身份、服装、构图、场景和画风一致，同时修正瑕疵、提升质感和完成度。${userPrompt ? `重绘要求：${userPrompt}` : ''}`,
+        prompt: buildSingleFrameReferences().prompt,
         resolution: '4K'
       },
       'hd-erase': {
@@ -2916,22 +3790,49 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     if (!config) return;
 
     const runDerivative = async () => {
-      let queueTaskId: string | null = null;
+      const shouldGenerateInNewNode = action === '9grid-multi';
+      const pendingNodeId = shouldGenerateInNewNode ? `image-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : '';
       try {
-        const queueTask = await taskQueueManager.enqueueTask(projectId, 'image_generation', {
-          prompt: config.prompt,
-          title: config.title,
-          aspectRatio: config.ratio || '16:9',
-          resolution: config.resolution || '4K',
-          sourceNodeId: id
-        }, id);
-        queueTaskId = queueTask.id;
-        await taskQueueManager.updateTaskStatus(projectId, queueTask.id, 'running');
-
-        updateNodeData(id, 'isGenerating', true);
-        updateNodeData(id, 'progressMsg', `正在生成${config.title}...`);
+        const singleFrameReferences = action === 'hd-redraw' ? buildSingleFrameReferences() : undefined;
+        if (shouldGenerateInNewNode) {
+          const [ratioX, ratioY] = (config.ratio || '16:9').split(':').map(Number);
+          const pendingWidth = 360;
+          const pendingHeight = Number.isFinite(ratioX) && Number.isFinite(ratioY) && ratioX > 0 && ratioY > 0
+            ? Math.round(pendingWidth * (ratioY / ratioX))
+            : 240;
+          const pendingNode = {
+            id: pendingNodeId,
+            type: 'imageNode',
+            position: { x: node.position.x + 360, y: node.position.y },
+            style: { width: pendingWidth, height: pendingHeight },
+            data: {
+              imageUrl: '',
+              title: config.title,
+              projectId,
+              prompt: config.prompt,
+              isGenerating: true,
+              progressMsg: `正在生成${config.title}...`,
+              aspectRatio: config.ratio || '16:9',
+              requestedAspectRatio: config.ratio || '16:9',
+              resolution: config.resolution || '4K',
+              uiModel: String(node.data.uiModel || node.data.model || 'KONGLONG Image'),
+              model: String(node.data.uiModel || node.data.model || 'KONGLONG Image'),
+              onAction: handleImageAction,
+              onUpload: handleNodeFileUpload,
+              onGenerate: handleOpenGenerate,
+              onChange: handleImageChange,
+              onAddNode: addNode,
+              onOpenAssets: openAssets
+            },
+          };
+          setNodes(nds => [...nds, pendingNode]);
+          setEdges(eds => [...eds, { id: `e-${id}-${pendingNodeId}`, source: id, target: pendingNodeId, animated: true, style: { stroke: '#00bcd4' } }]);
+        } else {
+          updateNodeData(id, 'isGenerating', true);
+          updateNodeData(id, 'progressMsg', action === 'hd-redraw' ? '正在融合上游资产进行单帧重绘...' : `正在生成${config.title}...`);
+        }
         const imageUrl = await runImageGeneration(
-          config.prompt,
+          singleFrameReferences?.prompt || config.prompt,
           undefined,
           undefined,
           config.ratio || '16:9',
@@ -2940,28 +3841,51 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
             workspaceProjectId: projectId,
             createdBy: currentUser || 'system',
             uiModel: String(node.data.uiModel || 'KONGLONG Image'),
-            referenceImages: [sourceImage]
+            referenceImages: singleFrameReferences?.referenceImages || [sourceImage],
+            nodeId: shouldGenerateInNewNode ? pendingNodeId : id
           }
         );
-        addDerivedImageNode(String(imageUrl), config.title);
-        if (queueTaskId) {
-          await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'completed', { url: imageUrl });
+        if (shouldGenerateInNewNode) {
+          setNodes(nds => nds.map(item => item.id === pendingNodeId ? {
+            ...item,
+            data: {
+              ...item.data,
+              imageUrl: String(imageUrl),
+              isGenerating: false,
+              progressMsg: ''
+            }
+          } : item));
+        } else {
+          addDerivedImageNode(String(imageUrl), config.title);
         }
-        showToast(`${config.title}生成完成`);
+        MediaHistoryService.addHistory({ type: 'image', url: String(imageUrl) });
+        showToast(action === 'hd-redraw'
+          ? `单帧重绘完成：人物${singleFrameReferences?.summary.character || 0}，质感/场景${singleFrameReferences?.summary.qualityScene || 0}，单帧${singleFrameReferences?.summary.frame || 0}，道具${singleFrameReferences?.summary.prop || 0}`
+          : `${config.title}生成完成`
+        );
       } catch (err: any) {
         console.error(err);
-        if (queueTaskId) {
-          await taskQueueManager.updateTaskStatus(projectId, queueTaskId, 'failed', undefined, err?.message || '未知错误');
+        if (shouldGenerateInNewNode) {
+          setNodes(nds => nds.map(item => item.id === pendingNodeId ? {
+            ...item,
+            data: {
+              ...item.data,
+              isGenerating: false,
+              progressMsg: `${config.title}生成失败：${err?.message || '未知错误'}`
+            }
+          } : item));
         }
         showToast(`${config.title}生成失败：${err?.message || '未知错误'}`);
       } finally {
-        updateNodeData(id, 'isGenerating', false);
-        updateNodeData(id, 'progressMsg', '');
+        if (!shouldGenerateInNewNode) {
+          updateNodeData(id, 'isGenerating', false);
+          updateNodeData(id, 'progressMsg', '');
+        }
       }
     };
 
     runDerivative();
-  }, [getNodes, setNodes, setEdges, showToast, projectId, currentUser]);
+  }, [getNodes, getEdges, setNodes, setEdges, showToast, projectId, currentUser]);
 
   const updateNodeData = useCallback((id: string, key: string, value: any) => {
     saveHistory('update_node', id);
@@ -3094,8 +4018,12 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         const isVideo = !!node.data?.videoUrl;
         const ext = inferDownloadExtension(mediaUrl, isVideo ? 'mp4' : 'png');
         const safeTitle = String(node.data?.title || (isVideo ? 'video-node' : 'image-node')).replace(/[\\/:*?"<>|]/g, '-');
-        triggerMediaDownload(mediaUrl, `${safeTitle}.${ext}`);
-        showToast(isVideo ? '开始下载视频' : '开始下载图片');
+        triggerMediaDownload(mediaUrl, `${safeTitle}.${ext}`)
+          .then(() => showToast(isVideo ? '开始下载视频' : '开始下载图片'))
+          .catch((err) => {
+            console.error(err);
+            showToast('下载失败：媒体源不允许直接下载，请打开后另存为');
+          });
         break;
       }
       case 'add-shared-asset': {
@@ -3125,7 +4053,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         break;
       }
       case 'duplicate': {
-        const newNodeId = `${node.type}-${Date.now()}`;
+        const newNodeId = node.type + '-' + Date.now();
         const cleanData = {
           ...node.data,
           isGenerating: false,
@@ -3135,7 +4063,22 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           generationTaskId: undefined,
           providerTaskId: undefined,
           error: undefined,
-          errorMessage: undefined
+          errorMessage: undefined,
+          ...(node.type === 'imageNode' ? {
+            aspectRatio: node.data?.aspectRatio || node.data?.requestedAspectRatio || '16:9',
+            requestedAspectRatio: node.data?.requestedAspectRatio || node.data?.aspectRatio || '16:9',
+            resolution: node.data?.resolution || '4K',
+            uiModel: node.data?.uiModel || node.data?.model || 'KONGLONG Image',
+            model: node.data?.uiModel || node.data?.model || 'KONGLONG Image'
+          } : {}),
+          ...(node.type === 'videoNode' ? {
+            aspectRatio: node.data?.aspectRatio || '16:9',
+            resolution: node.data?.resolution || '720p',
+            duration: node.data?.duration || 15,
+            videoModel: node.data?.videoModel || 'Seedance 2.0 VIP',
+            activeTab: node.data?.activeTab || 'multi_reference',
+            cleanOutputConstraints: Boolean(node.data?.cleanOutputConstraints)
+          } : {})
         };
         const newNode = {
           ...node,
@@ -3145,8 +4088,19 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           position: { x: node.position.x + 50, y: node.position.y + 50 },
           data: cleanData
         };
+        const inheritedEdges = edges
+          .filter(edge => edge.target === nodeId)
+          .map((edge, index) => ({
+            ...edge,
+            id: edge.source + '-' + newNodeId + '-ref-' + Date.now() + '-' + index,
+            target: newNodeId,
+            selected: false
+          }));
         setNodes(nds => [...nds, newNode]);
-        showToast('已创建副本');
+        if (inheritedEdges.length > 0) {
+          setEdges(eds => [...eds, ...inheritedEdges]);
+        }
+        showToast(inheritedEdges.length > 0 ? '\u5df2\u521b\u5efa\u526f\u672c\uff0c\u5e76\u7ee7\u627f ' + inheritedEdges.length + ' \u6761\u4e0a\u6e38\u53c2\u8003' : '\u5df2\u521b\u5efa\u526f\u672c');
         break;
       }
       case 'paste': {
@@ -3216,20 +4170,50 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         break;
     }
     setMenu(null);
-  }, [menu, nodes, setNodes, setEdges, showToast, setClipboard]);
+  }, [menu, nodes, edges, setNodes, setEdges, showToast, setClipboard]);
 
   const handlePaneContextMenuAction = useCallback((action: string) => {
     if (!menu || menu.type !== 'pane') {
       setMenu(null);
       return;
     }
+    if (action === 'create-text' || action === 'create-image' || action === 'create-video') {
+      const position = screenToFlowPosition({ x: menu.left, y: menu.top });
+      const timestamp = Date.now();
+      const nodeConfig = {
+        'create-text': {
+          id: `textNode-${timestamp}`,
+          type: 'textNode',
+          style: { width: 320, height: 180 },
+          data: { text: '', projectId, onChange: handleTextChange }
+        },
+        'create-image': {
+          id: `imageNode-${timestamp}`,
+          type: 'imageNode',
+          style: { width: 320, height: 320 },
+          data: { imageUrl: '', projectId, onAction: handleImageAction, onUpload: handleNodeFileUpload, onGenerate: handleOpenGenerate, onChange: handleImageChange, onOpenAssets: openAssets }
+        },
+        'create-video': {
+          id: `videoNode-${timestamp}`,
+          type: 'videoNode',
+          style: { width: 320, height: 320 },
+          data: { videoUrl: '', projectId, onUpload: handleNodeFileUpload, onOpenAssets: openAssets }
+        }
+      } as const;
+      const config = nodeConfig[action];
+      setNodes(nds => [...nds, { ...config, position } as unknown as Node]);
+      showToast(action === 'create-text' ? '已新建文本节点' : action === 'create-image' ? '已新建图片节点' : '已新建视频节点');
+      setMenu(null);
+      return;
+    }
     if (action === 'paste' && clipboard) {
+      const position = screenToFlowPosition({ x: menu.left, y: menu.top });
       if (clipboard.type === 'node') {
         const newNodeId = `${clipboard.data.type}-${Date.now()}`;
         const newNode = {
           ...clipboard.data,
           id: newNodeId,
-          position: { x: menu.left, y: menu.top }
+          position
         };
         setNodes(nds => [...nds, newNode]);
         showToast('已粘贴节点');
@@ -3238,7 +4222,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         const newNode = {
           id: newNodeId,
           type: 'imageNode',
-          position: { x: menu.left, y: menu.top },
+          position,
           style: { width: 320, height: 320 },
           data: { imageUrl: clipboard.data, onAction: handleImageAction, onUpload: handleNodeFileUpload, onGenerate: handleOpenGenerate }
         };
@@ -3247,7 +4231,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       }
     }
     setMenu(null);
-  }, [menu, clipboard, setNodes, showToast, handleImageAction]);
+  }, [menu, clipboard, setNodes, showToast, screenToFlowPosition, projectId, handleTextChange, handleImageAction, handleOpenGenerate, handleImageChange]);
 
   const runAIGeneration = useCallback(async (nodeId: string) => {
     const currentNodes = getNodes();
@@ -3298,8 +4282,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         const imageInput = inputNodes.find(n => n?.type === 'imageNode')?.data.imageUrl as string;
         if (!imageInput) throw new Error("Requires image input");
         
-        const base64Data = imageInput.split(',')[1];
-        const mimeType = imageInput.split(';')[0].split(':')[1];
+        const { data: base64Data, mimeType } = await toInlineImageParts(imageInput);
         
         const ai = getAIClient();
         const response = await ai.models.generateContent({
@@ -3329,8 +4312,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         
         // Simulate storyboard generation (in reality, would call AI to generate 9 images or a grid)
         // For demonstration, we'll just create a text node describing the storyboard
-        const base64Data = imageInput.split(',')[1];
-        const mimeType = imageInput.split(';')[0].split(':')[1];
+        const { data: base64Data, mimeType } = await toInlineImageParts(imageInput);
         
         const ai = getAIClient();
         const response = await ai.models.generateContent({
@@ -3354,57 +4336,77 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
       } else if (node.data.type === 'singleFrameRepaint') {
         const imageNodes = inputNodes.filter(n => n?.type === 'imageNode');
         if (imageNodes.length === 0) throw new Error("需要连接至少一张图片节点");
-        
-        const sortedImageNodes = [...imageNodes].sort((a, b) => (a?.position.x || 0) - (b?.position.x || 0));
-        const contents: any[] = [];
-        
-        sortedImageNodes.forEach((n, idx) => {
-          if (!n?.data.imageUrl) return;
-          const labelMap = ['图A', '图B', '图C', '图D'];
-          const label = idx < 4 ? labelMap[idx] : `额外图片${idx+1}`;
-          contents.push(`这是${label}:`);
-          const imageUrl = n.data.imageUrl as string;
-          const base64Data = imageUrl.split(',')[1];
-          const mimeType = imageUrl.split(';')[0].split(':')[1];
-          contents.push({ inlineData: { data: base64Data, mimeType } });
+
+        const imageItems = imageNodes
+          .map(n => ({
+            node: n,
+            url: getNodeImageUrl(n),
+            role: inferSingleFrameReferenceRole(n)
+          }))
+          .filter(item => item.url);
+
+        const characterRefs = imageItems.filter(item => item.role === 'character');
+        const qualitySceneRefs = imageItems.filter(item => item.role === 'quality_scene');
+        const frameRefs = imageItems.filter(item => item.role === 'frame');
+        const propRefs = imageItems.filter(item => item.role === 'prop');
+        const fallbackFrame = [...imageItems].sort((a, b) => (b.node?.position.x || 0) - (a.node?.position.x || 0))[0];
+        const frameUrl = frameRefs[0]?.url || fallbackFrame?.url;
+        if (!frameUrl) throw new Error("需要至少一张可用图片作为单帧构图参考");
+
+        const referenceImages = [
+          ...characterRefs.map(item => item.url),
+          ...qualitySceneRefs.map(item => item.url),
+          frameUrl,
+          ...propRefs.map(item => item.url)
+        ].filter((url, index, arr) => !!url && arr.indexOf(url) === index);
+
+        const repaintPrompt = buildSingleFrameRedrawPrompt({
+          userPrompt: String(node.data.prompt || '').trim(),
+          hasCharacter: characterRefs.length > 0,
+          hasQualityScene: qualitySceneRefs.length > 0,
+          hasProps: propRefs.length > 0
         });
-        
-        import('../config/prompts').then(async ({ SINGLE_FRAME_REPAINT_PROMPT }) => {
-          try {
-            task = await taskQueueManager.enqueueTask(projectId, 'image_generation', { prompt: 'Single Frame Repaint' }, nodeId);
-            await taskQueueManager.updateTaskStatus(projectId, task.id, 'running');
-            
-            contents.push(SINGLE_FRAME_REPAINT_PROMPT);
-            const ai = getAIClient();
-            const response = await ai.models.generateContent({
-              model: 'gemini-3.1-pro-preview',
-              contents: contents
-            });
-            
-            await taskQueueManager.updateTaskStatus(projectId, task.id, 'completed', { text: response.text });
-            
-            // Generate a text node with the prompt
-            const textNodeId = `text-${Date.now()}`;
-            const newNode = {
-              id: textNodeId,
-              type: 'textNode',
-              position: { x: node.position.x, y: node.position.y + 200 },
-              style: { width: 400, height: 280 },
-              data: { text: response.text, onChange: handleTextChange },
-            };
-            setNodes(nds => [...nds, newNode]);
-            setEdges(eds => [...eds, { id: `e-${nodeId}-${textNodeId}`, source: nodeId, target: textNodeId, animated: true }]);
-          } catch(err: any) {
-            if (task) {
-              await taskQueueManager.updateTaskStatus(projectId, task.id, 'failed', undefined, err.message);
-            }
-            console.error("Single Frame Repaint failed:", err);
-            showToast(err.message || '生成重绘指令失败');
-          } finally {
-            updateNodeData(nodeId, 'isGenerating', false);
-          }
+
+        task = await taskQueueManager.enqueueTask(projectId, 'image_generation', {
+          prompt: repaintPrompt,
+          referenceRoles: imageItems.map(item => ({ nodeId: item.node?.id, role: item.role }))
+        }, nodeId);
+        await taskQueueManager.updateTaskStatus(projectId, task.id, 'running');
+        updateNodeData(nodeId, 'progressMsg', '正在根据参考类型进行单帧重绘...');
+
+        const imageUrl = await runImageGeneration(repaintPrompt, undefined, undefined, '16:9', '4K', {
+          workspaceProjectId: projectId,
+          createdBy: currentUser || 'system',
+          uiModel: 'KONGLONG Image',
+          referenceImages,
+          imageCount: 1
         });
-        return; // Early return since we call updateNodeData in the promise
+
+        await taskQueueManager.updateTaskStatus(projectId, task.id, 'completed', { url: imageUrl });
+        await assetManager.registerAsset(projectId, { type: 'image', url: imageUrl, name: `单帧重绘 ${task.id.slice(0, 4)}` });
+        MediaHistoryService.addHistory({ type: 'image', url: imageUrl });
+
+        const newNodeId = `image-${Date.now()}`;
+        const newNode = {
+          id: newNodeId,
+          type: 'imageNode',
+          position: { x: node.position.x + 360, y: node.position.y },
+          style: { width: 420, height: 236 },
+          data: {
+            imageUrl,
+            title: '单帧重绘结果',
+            projectId,
+            prompt: repaintPrompt,
+            onAction: handleImageAction,
+            onGenerate: handleOpenGenerate,
+            onChange: handleImageChange,
+            requestedAspectRatio: '16:9',
+            resolution: '4K'
+          },
+        };
+        setNodes(nds => [...nds, newNode]);
+        setEdges(eds => [...eds, { id: `e-${nodeId}-${newNodeId}`, source: nodeId, target: newNodeId, animated: true, style: { stroke: '#00bcd4' } }]);
+        showToast(`单帧重绘完成：人物${characterRefs.length}，场景质感${qualitySceneRefs.length}，单帧${frameUrl ? 1 : 0}，道具${propRefs.length}`);
       }
     } catch (error: any) {
       if (task) {
@@ -3415,18 +4417,25 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
     } finally {
       updateNodeData(nodeId, 'isGenerating', false);
     }
-  }, [nodes, edges, setNodes, setEdges, updateNodeData, handleTextChange, projectId]);
+  }, [nodes, edges, setNodes, setEdges, updateNodeData, handleTextChange, handleImageAction, handleOpenGenerate, handleImageChange, projectId, currentUser]);
 
-  const handleNodeFileUpload = useCallback((nodeId: string, url: string, fileType: 'image' | 'video' | 'audio') => {
+  const handleNodeFileUpload = useCallback(async (nodeId: string, url: string, fileType: 'image' | 'video' | 'audio') => {
+    let finalUrl = url;
+    try {
+      finalUrl = await ensurePublicMediaUrl(url, fileType, 0);
+    } catch (error) {
+      console.warn('Node media upload to public storage failed, use local preview only:', error);
+      showToast('素材上传到对象存储失败：仅本次浏览器可预览，建议检查 TOS 配置');
+    }
     setNodes(nds => nds.map(n => {
       if (n.id === nodeId) {
-        if (fileType === 'image') return { ...n, data: { ...n.data, imageUrl: url } };
-        if (fileType === 'video') return { ...n, data: { ...n.data, videoUrl: url } };
-        if (fileType === 'audio') return { ...n, data: { ...n.data, audioUrl: url } };
+        if (fileType === 'image') return { ...n, data: { ...n.data, imageUrl: finalUrl } };
+        if (fileType === 'video') return { ...n, data: { ...n.data, videoUrl: finalUrl } };
+        if (fileType === 'audio') return { ...n, data: { ...n.data, audioUrl: finalUrl } };
       }
       return n;
     }));
-  }, [setNodes]);
+  }, [setNodes, showToast]);
 
 
   const handleConfirmBreakdown = useCallback((nodeId: string) => {
@@ -4107,6 +5116,49 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         y: event.clientY,
       });
 
+      const sharedAssetPayload = event.dataTransfer.getData('application/x-konglong-shared-asset');
+      if (sharedAssetPayload) {
+        try {
+          const asset = JSON.parse(sharedAssetPayload);
+          const assetUrl = asset.url || asset.thumbnail_url;
+          if (!assetUrl) {
+            showToast('资产缺少可用链接，无法拖入画布');
+            return;
+          }
+
+          const isVideo = asset.category === '视频'
+            || asset.type === 'video'
+            || /\.(mp4|mov|webm)(\?|$)/i.test(assetUrl);
+
+          if (isVideo) {
+            addNode('videoNode', undefined, position, undefined, {
+              videoUrl: assetUrl,
+              text: asset.name || '组内共享视频',
+              sharedAssetId: asset.asset_id,
+              assetCategory: asset.category,
+              source: 'group-shared-asset',
+            });
+          } else {
+            addNode('imageNode', undefined, position, undefined, {
+              imageUrl: assetUrl,
+              text: asset.name || '组内共享图片',
+              sharedAssetId: asset.asset_id,
+              assetCategory: asset.category,
+              source: 'group-shared-asset',
+              initialWidth: 360,
+              initialHeight: 240,
+            });
+          }
+          showToast('已从组内共享资产库添加到画布');
+          persistCanvasSoon();
+          return;
+        } catch (error) {
+          console.warn('Failed to drop shared asset:', error);
+          showToast('资产拖入失败');
+          return;
+        }
+      }
+
       if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
         Array.from(event.dataTransfer.files).forEach((file, index) => {
           const offset = index * 40;
@@ -4114,7 +5166,15 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           
           if (file.type.startsWith('image/')) {
             const reader = new FileReader();
-            reader.onload = (e) => {
+            reader.onload = async (e) => {
+              const localUrl = e.target?.result as string;
+              let imageUrl = localUrl;
+              try {
+                imageUrl = await ensurePublicMediaUrl(localUrl, 'image', index);
+              } catch (error) {
+                console.warn('Image upload to public storage failed, use local preview only:', error);
+                showToast('图片上传到对象存储失败：仅本次浏览器可预览，建议检查 TOS 配置');
+              }
               const newNodeId = `image-${Date.now()}-${index}`;
               const newNode = {
                 id: newNodeId,
@@ -4122,20 +5182,28 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                 position: nodePosition,
                 style: { width: 320, height: 320 },
                 data: { 
-                  imageUrl: e.target?.result as string,
+                  imageUrl,
                   onAction: handleImageAction,
                   onUpload: handleNodeFileUpload,
                   onGenerate: handleOpenGenerate
                 },
               };
               setNodes((nds) => nds.concat(newNode));
+              persistCanvasSoon();
               if (index === 0) showToast('图片上传成功');
             };
             reader.readAsDataURL(file);
           } else if (file.type.startsWith('video/')) {
             const reader = new FileReader();
-            reader.onload = (e) => {
-              const videoUrl = e.target?.result as string;
+            reader.onload = async (e) => {
+              const localUrl = e.target?.result as string;
+              let videoUrl = localUrl;
+              try {
+                videoUrl = await ensurePublicMediaUrl(localUrl, 'video', index);
+              } catch (error) {
+                console.warn('Video upload to public storage failed, use local preview only:', error);
+                showToast('视频上传到对象存储失败：仅本次浏览器可预览，建议检查 TOS 配置');
+              }
               const newNodeId = `video-${Date.now()}-${index}`;
               const newNode = {
                 id: newNodeId,
@@ -4145,13 +5213,21 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                 data: { videoUrl, onUpload: handleNodeFileUpload },
               };
               setNodes((nds) => nds.concat(newNode));
+              persistCanvasSoon();
               if (index === 0) showToast('视频上传成功');
             };
             reader.readAsDataURL(file);
           } else if (file.type.startsWith('audio/')) {
             const reader = new FileReader();
-            reader.onload = (e) => {
-              const audioUrl = e.target?.result as string;
+            reader.onload = async (e) => {
+              const localUrl = e.target?.result as string;
+              let audioUrl = localUrl;
+              try {
+                audioUrl = await ensurePublicMediaUrl(localUrl, 'audio', index);
+              } catch (error) {
+                console.warn('Audio upload to public storage failed, use local preview only:', error);
+                showToast('音频上传到对象存储失败：仅本次浏览器可预览，建议检查 TOS 配置');
+              }
               const newNodeId = `audio-${Date.now()}-${index}`;
               const newNode = {
                 id: newNodeId,
@@ -4161,6 +5237,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                 data: { audioUrl, onUpload: handleNodeFileUpload },
               };
               setNodes((nds) => nds.concat(newNode));
+              persistCanvasSoon();
               if (index === 0) showToast('音频上传成功');
             };
             reader.readAsDataURL(file);
@@ -4185,6 +5262,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                     data: { script: scriptData },
                   };
                   setNodes((nds) => nds.concat(newNode));
+                  persistCanvasSoon();
                   if (index === 0) showToast('脚本上传成功');
                   return;
                 }
@@ -4198,6 +5276,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
                 data: { text: textContent, onChange: handleTextChange },
               };
               setNodes((nds) => nds.concat(newNode));
+              persistCanvasSoon();
               if (index === 0) showToast('文本上传成功');
             };
             reader.readAsText(file);
@@ -4205,7 +5284,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         });
       }
     },
-    [screenToFlowPosition, setNodes, handleImageAction, showToast]
+    [screenToFlowPosition, setNodes, handleImageAction, showToast, addNode, persistCanvasSoon]
   );
 
   const onNodeContextMenu = useCallback(
@@ -4768,9 +5847,12 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
 
         {/* Script & Storyboard Popover */}
         {activeSidebarPopover === 'script' && (
-          <div className="bg-[#1C1C1E] border border-zinc-800/80 rounded-[20px] shadow-2xl w-[420px] h-[600px] flex flex-col animate-in fade-in zoom-in-95 duration-200 pointer-events-auto overflow-hidden">
+          <div
+            className="group/script-panel relative bg-[#1C1C1E] border border-zinc-800/80 rounded-[20px] shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-200 pointer-events-auto overflow-hidden"
+            style={{ width: scriptPanelSize.width, height: scriptPanelSize.height }}
+          >
             <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 shrink-0">
-              <h2 className="text-indigo-400 font-medium text-[15px]">剧本与分镜</h2>
+              <h2 className="text-indigo-400 font-medium text-[15px]">?????</h2>
               <button onClick={() => setActiveSidebarPopover(null)} className="text-zinc-500 hover:text-white transition-colors">
                 <X size={18} />
               </button>
@@ -4778,6 +5860,18 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
             <div className="flex-1 overflow-hidden">
                <ScriptStoryboardPanel projectId={projectId} groupId={groupId} />
             </div>
+            <div
+              onMouseDown={handleScriptPanelResizeStart}
+              title="Resize panel"
+              className="absolute right-0 bottom-0 z-[80] h-9 w-9 cursor-nwse-resize opacity-0 group-hover/script-panel:opacity-100 transition-opacity"
+            >
+              <div className="absolute right-2 bottom-2 h-5 w-5 rounded-br-[14px] border-r-2 border-b-2 border-[#00e5ff]/70 shadow-[0_0_16px_rgba(0,229,255,0.3)]" />
+            </div>
+            <div
+              onMouseDown={handleScriptPanelResizeStart}
+              title="Resize width"
+              className="absolute right-0 top-16 bottom-10 z-[70] w-2 cursor-ew-resize opacity-0 hover:opacity-100 transition-opacity bg-gradient-to-b from-transparent via-[#00e5ff]/30 to-transparent"
+            />
           </div>
         )}
       </div>
@@ -4802,7 +5896,7 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
           onDrop={onDrop}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          connectionRadius={30}
+          connectionRadius={96}
           fitView
           className="bg-[#0E0F11]"
           selectionOnDrag={true}
@@ -4971,10 +6065,22 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
         )}
 
         {menu && menu.type === 'pane' && (
-          <div 
+          <div
             className="fixed z-[1000] bg-[#242424] border border-zinc-800 rounded-xl shadow-2xl min-w-[200px] py-2 flex flex-col font-medium"
             style={{ top: menu.top, left: menu.left }}
           >
+            <button className="flex items-center justify-between px-4 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full transition-colors text-sm" onClick={() => handlePaneContextMenuAction('create-text')}>
+              <span className="flex items-center gap-2"><Type size={14} />新建文本节点</span>
+            </button>
+            <button className="flex items-center justify-between px-4 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full transition-colors text-sm" onClick={() => handlePaneContextMenuAction('create-image')}>
+              <span className="flex items-center gap-2"><ImageIcon size={14} />新建图片节点</span>
+            </button>
+            <button className="flex items-center justify-between px-4 py-2 text-zinc-200 hover:bg-[#343434] hover:text-white text-left w-full transition-colors text-sm" onClick={() => handlePaneContextMenuAction('create-video')}>
+              <span className="flex items-center gap-2"><Video size={14} />新建视频节点</span>
+            </button>
+
+            <div className="h-px bg-zinc-800 my-2 mx-4"></div>
+
             <button className="flex items-center justify-between px-4 py-2 hover:bg-[#343434] text-white text-left w-full transition-colors text-sm" onClick={() => setMenu(null)}>
               <span>上传</span>
             </button>
@@ -5073,7 +6179,13 @@ function Canvas({ projectId, projectName, groupId, groupName, onBackToProjects, 
               <img src={nodes.find(n => n.id === fullscreenNodeId)?.data?.imageUrl || undefined} className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" alt="" />
             )}
             {nodes.find(n => n.id === fullscreenNodeId)?.type === 'videoNode' && (
-              <video src={nodes.find(n => n.id === fullscreenNodeId)?.data?.videoUrl || undefined} controls className="max-w-full max-h-full rounded-xl shadow-2xl" />
+              <video
+                src={nodes.find(n => n.id === fullscreenNodeId)?.data?.videoUrl || undefined}
+                data-original-src={nodes.find(n => n.id === fullscreenNodeId)?.data?.videoUrl || undefined}
+                onError={fallbackVideoToProxy}
+                controls
+                className="max-w-full max-h-full rounded-xl shadow-2xl"
+              />
             )}
             {nodes.find(n => n.id === fullscreenNodeId)?.type === 'textNode' && (
               <div className="w-full h-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 shadow-2xl">
@@ -5540,3 +6652,8 @@ export default function InfiniteCanvasWrapper({ onClose, renderTopRight, current
     </div>
   );
 }
+
+
+
+
+

@@ -148,3 +148,74 @@ CREATE INDEX IF NOT EXISTS idx_operation_logs_project_id
 
 CREATE INDEX IF NOT EXISTS idx_operation_logs_actor_user_id
   ON operation_logs(actor_user_id);
+
+CREATE TABLE IF NOT EXISTS shared_assets (
+  asset_id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  project_id TEXT,
+  type TEXT NOT NULL DEFAULT 'reference',
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  thumbnail_url TEXT,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  linked_episode_ids_json TEXT NOT NULL DEFAULT '[]',
+  linked_beat_ids_json TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_assets_group_id
+  ON shared_assets(group_id);
+
+CREATE TABLE IF NOT EXISTS script_episodes (
+  episode_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  episode_number INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  script_text TEXT NOT NULL DEFAULT '',
+  storyboard_text TEXT NOT NULL DEFAULT '',
+  required_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+  annotations_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_script_episodes_project_id
+  ON script_episodes(project_id);
+
+CREATE TABLE IF NOT EXISTS script_beats (
+  beat_id TEXT PRIMARY KEY,
+  episode_id TEXT NOT NULL,
+  beat_number INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  script_text TEXT NOT NULL DEFAULT '',
+  storyboard_text TEXT NOT NULL DEFAULT '',
+  required_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+  linked_canvas_node_ids_json TEXT NOT NULL DEFAULT '[]',
+  annotations_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_script_beats_episode_id
+  ON script_beats(episode_id);
+
+CREATE TABLE IF NOT EXISTS workspace_annotations (
+  annotation_id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_annotations_target
+  ON workspace_annotations(target_type, target_id);

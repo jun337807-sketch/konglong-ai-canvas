@@ -1,4 +1,4 @@
-import { generationRepository } from '../../repositories/generationRepository';
+﻿import { generationRepository } from '../../repositories/generationRepository';
 import { UnifiedTask } from '../../types/task';
 
 function sleep(ms: number) {
@@ -35,19 +35,27 @@ export async function executeVideoApi(task: UnifiedTask): Promise<string> {
   if (submit.result.url) return submit.result.url;
   if (!submit.result.providerTaskId) throw new Error('视频生成失败：第三方服务没有返回任务 ID。');
 
-  const maxAttempts = 80;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await sleep(4000);
-    const query = await generationRepository.queryVideo(submit.result.providerTaskId, {
-      provider: submit.result.provider,
-      taskId: submit.task?.id
-    });
+  let transientErrorCount = 0;
+  while (true) {
+    await sleep(10000);
+    try {
+      const query = await generationRepository.queryVideo(submit.result.providerTaskId, {
+        provider: submit.result.provider,
+        taskId: submit.task?.id
+      });
+      transientErrorCount = 0;
 
-    if (query.result.status === 'succeeded' && query.result.url) return query.result.url;
-    if (query.result.status === 'failed') {
-      throw new Error(query.result.errorMessage || '视频生成失败：第三方服务返回失败状态。');
+      if (query.result.status === 'succeeded' && query.result.url) return query.result.url;
+      if (query.result.status === 'failed') {
+        throw new Error(query.result.errorMessage || '视频生成失败：第三方服务返回失败状态。');
+      }
+    } catch (error: any) {
+      if (error?.message?.includes('第三方服务返回失败状态')) throw error;
+      transientErrorCount += 1;
+      console.warn('[VideoApiAdapter] queryVideo transient error, keep polling:', error);
+      if (transientErrorCount >= 90) {
+        throw new Error(`视频任务仍可能在服务商后台处理中，但连续查询失败：${error?.message || '网络异常'}`);
+      }
     }
   }
-
-  throw new Error('视频生成仍在处理中，请稍后在任务记录中查看结果。');
 }

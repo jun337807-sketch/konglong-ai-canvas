@@ -597,9 +597,52 @@ export async function runImageGeneration(
     uiModel?: string;
     referenceImages?: string[];
     imageCount?: number;
+    nodeId?: string;
   }
 ): Promise<string> {
   const normalizedPrompt = buildImageGenerationPrompt(prompt, aspectRatio, resolution);
+  const extractGeneratedUrl = (value: any, depth = 0): string | undefined => {
+    if (!value || depth > 8) return undefined;
+    const looksLikeMediaUrl = (text: string) => /^https?:\/\//i.test(text) && (
+      /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(text.split('?')[0].toLowerCase())
+      || /\/file\//i.test(text)
+      || /aitohumanize|grsai|tos-|volces|volc|cdn|image|img|media|oss|cos/i.test(text)
+    );
+    if (typeof value === 'string') {
+      const text = value.trim();
+      if (looksLikeMediaUrl(text)) return text;
+      if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+        try {
+          return extractGeneratedUrl(JSON.parse(text), depth + 1);
+        } catch {
+          return undefined;
+        }
+      }
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const url = extractGeneratedUrl(item, depth + 1);
+        if (url) return url;
+      }
+      return undefined;
+    }
+    if (typeof value !== 'object') return undefined;
+    for (const key of ['url', 'imageUrl', 'image_url', 'resultUrl', 'result_url', 'fileUrl', 'file_url']) {
+      const url = extractGeneratedUrl(value[key], depth + 1);
+      if (url) return url;
+    }
+    for (const key of ['result', 'results', 'raw', 'data', 'output', 'outputs', 'images', 'image', 'media', 'files', 'file']) {
+      const url = extractGeneratedUrl(value[key], depth + 1);
+      if (url) return url;
+    }
+    for (const [key, item] of Object.entries(value)) {
+      if (['request', 'prompt', 'input', 'inputs', 'payload'].includes(key)) continue;
+      const url = extractGeneratedUrl(item, depth + 1);
+      if (url) return url;
+    }
+    return undefined;
+  };
   try {
     const { result, task } = await generationRepository.submitImage({
       prompt: normalizedPrompt,
@@ -613,7 +656,8 @@ export async function runImageGeneration(
       createdBy: options?.createdBy || localStorage.getItem('dino_currentUser') || 'system',
       metadata: {
         source: 'runImageGeneration',
-        imageCount: options?.imageCount || 1
+        imageCount: options?.imageCount || 1,
+        nodeId: options?.nodeId
       }
     });
 
@@ -622,12 +666,12 @@ export async function runImageGeneration(
     }
 
     if (result.url) {
-      return await imageUrlToDataUrl(result.url, signal);
+      return result.url;
     }
 
     if (task?.id && options?.workspaceProjectId) {
       const completedTask = await generationRepository.waitForTask(options.workspaceProjectId, task.id, {
-        timeoutMs: Number((import.meta as any).env?.VITE_IMAGE_GENERATION_WAIT_MS || 360000),
+        timeoutMs: Number((import.meta as any).env?.VITE_IMAGE_GENERATION_WAIT_MS || 900000),
         intervalMs: 3000
       });
 
@@ -636,13 +680,13 @@ export async function runImageGeneration(
       }
 
       const output = completedTask.output as any;
-      const generatedUrl = output?.url || output?.result?.url || output?.data?.[0]?.url;
+      const generatedUrl = extractGeneratedUrl(output);
       const generatedBase64 = output?.data?.[0]?.b64_json
         ? `data:image/png;base64,${output.data[0].b64_json}`
         : undefined;
 
       if (generatedUrl || generatedBase64) {
-        return await imageUrlToDataUrl(generatedUrl || generatedBase64, signal);
+        return generatedUrl || generatedBase64;
       }
     }
 
@@ -735,7 +779,7 @@ function buildImageGenerationPrompt(prompt: string, aspectRatio: string, resolut
   ].join('\n');
 }
 
-async function imageUrlToDataUrl(url: string, signal?: AbortSignal): Promise<string> {
+export async function imageUrlToDataUrl(url: string, signal?: AbortSignal): Promise<string> {
   if (url.startsWith('data:image/')) return url;
 
   const response = await fetch(url, { signal });

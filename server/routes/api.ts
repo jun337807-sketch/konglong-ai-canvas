@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { getBucketName, getTosClient, getTosPublicBaseUrl } from '../services/tosService.js';
 import multer from 'multer';
 import { getDb } from '../db/database.js';
@@ -38,12 +38,12 @@ router.post('/projects/:id', async (req, res) => {
     if (existing) {
         await db.run(
             'UPDATE projects SET name = ?, projectData = ?, updatedAt = ? WHERE id = ?',
-            [name || '未命名项目', JSON.stringify(projectData), now, id]
+            [name || '?????', JSON.stringify(projectData), now, id]
         );
     } else {
         await db.run(
             'INSERT INTO projects (id, name, projectData, updatedAt) VALUES (?, ?, ?, ?)',
-            [id, name || '未命名项目', JSON.stringify(projectData), now]
+            [id, name || '?????', JSON.stringify(projectData), now]
         );
     }
     
@@ -107,4 +107,57 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+router.get('/media-proxy', async (req, res) => {
+  const url = typeof req.query.url === 'string' ? req.query.url : '';
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return res.status(400).json({ success: false, error: 'invalid media url' });
+  }
+
+  try {
+    const range = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 KonglongCanvas/1.0',
+        ...(range ? { Range: range } : {})
+      }
+    });
+    if (!response.ok || !response.body) {
+      return res.status(response.status || 502).json({ success: false, error: `media fetch failed: ${response.status}` });
+    }
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const cacheControl = response.headers.get('cache-control') || 'public, max-age=86400';
+    const contentLength = response.headers.get('content-length');
+    const contentRange = response.headers.get('content-range');
+    const acceptRanges = response.headers.get('accept-ranges') || 'bytes';
+
+    res.status(response.status === 206 ? 206 : 200);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', cacheControl);
+    res.setHeader('Accept-Ranges', acceptRanges);
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+
+    response.body.pipeTo(new WritableStream({
+      write(chunk) {
+        res.write(Buffer.from(chunk));
+      },
+      close() {
+        res.end();
+      },
+      abort(err) {
+        res.destroy(err);
+      }
+    })).catch((err) => {
+      if (!res.headersSent) res.status(500);
+      res.end();
+      console.error('Media proxy stream error:', err);
+    });
+  } catch (err: any) {
+    console.error('Media proxy error:', err);
+    res.status(502).json({ success: false, error: err.message || 'media proxy failed' });
+  }
+});
+
 export default router;
+

@@ -36,6 +36,16 @@ class TaskQueueManager {
     }
   }
 
+  async clearTasks(projectId: string): Promise<boolean> {
+    try {
+      localStorage.removeItem(`${STORAGE_KEY_PREFIX}${projectId}`);
+      return true;
+    } catch (e) {
+      console.warn('Failed to clear tasks:', e);
+      return false;
+    }
+  }
+
   async enqueueTask(projectId: string, type: Task['type'], payload: any, nodeId?: string): Promise<Task> {
     const tasks = await this.getTasks(projectId);
     const newTask: Task = {

@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
-import { X, ListTodo, CheckCircle2, XCircle, Loader2, Clock3, AlertTriangle, Sparkles, Film, Image as ImageIcon } from 'lucide-react';
+import { X, ListTodo, CheckCircle2, XCircle, Loader2, Clock3, AlertTriangle, Sparkles, Film, Image as ImageIcon, Trash2 } from 'lucide-react';
 import { taskQueueManager, Task } from '../services/taskQueueManager';
 
 interface TaskQueuePanelProps {
@@ -25,6 +25,7 @@ type QueueTask = {
   updated_at?: string;
   started_at?: string | null;
   completed_at?: string | null;
+  nodeId?: string;
   source: 'server' | 'local';
 };
 
@@ -45,6 +46,7 @@ function normalizeServerTask(task: any): QueueTask {
     type: task.capability || task.type || 'generation',
     status: normalizeTaskStatus(task.status),
     error: task.error_message || task.errorMessage || null,
+    nodeId: task.nodeId || task.input?.metadata?.nodeId || task.input?.nodeId,
     createdAt: task.created_at,
     updatedAt: task.updated_at,
     source: 'server'
@@ -128,22 +130,80 @@ function StatusIcon({ status }: { status: QueueTask['status'] }) {
   return <Clock3 size={18} className="text-amber-400" />;
 }
 
+async function fetchServerTasks(projectId: string) {
+  const url = `/api/workspace-projects/${encodeURIComponent(projectId)}/tasks`;
+  try {
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    const text = await response.text();
+    let data: any = null;
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      return {
+        success: false,
+        tasks: [],
+        error: `任务接口返回了非 JSON 内容（HTTP ${response.status}）`,
+        detail: text.slice(0, 180)
+      };
+    }
+
+    if (!response.ok || !data?.success) {
+      return {
+        success: false,
+        tasks: data?.tasks || [],
+        error: data?.message || data?.error || `任务接口读取失败（HTTP ${response.status}）`,
+        detail: data?.detail
+      };
+    }
+
+    return {
+      success: true,
+      tasks: data.tasks || [],
+      error: null,
+      detail: null
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      tasks: [],
+      error: error?.message || '任务接口连接失败',
+      detail: null
+    };
+  }
+}
+
 export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
   const [tasks, setTasks] = useState<QueueTask[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [isClearing, setIsClearing] = useState(false);
 
   useEffect(() => {
     const loadTasks = async () => {
       try {
         const [serverRes, localTasks, legacyLocalTasks] = await Promise.all([
-          fetch(`/api/workspace-projects/${projectId}/tasks`).then(r => r.json()).catch(() => null),
+          fetchServerTasks(projectId),
           taskQueueManager.getTasks(projectId),
           projectId === 'local-project' ? Promise.resolve([]) : taskQueueManager.getTasks('local-project')
         ]);
 
         const serverTasks = serverRes?.success ? (serverRes.tasks || []).map(normalizeServerTask) : [];
-        const localQueueTasks = [...localTasks, ...legacyLocalTasks].map(normalizeLocalTask);
+        const serverNodeKeys = new Set(
+          serverTasks
+            .map(task => task.nodeId ? `${task.nodeId}:${task.type.includes('video') ? 'video' : task.type.includes('image') ? 'image' : task.type}` : '')
+            .filter(Boolean)
+        );
+        const localQueueTasks = [...localTasks, ...legacyLocalTasks]
+          .map(normalizeLocalTask)
+          // 生成类任务现在统一由服务器登记；本地旧影子任务只会制造重复和假“生成中”。
+          .filter(task => {
+            if (task.type.includes('video') || task.type.includes('image')) return false;
+            if (!serverRes?.success) return true;
+            if (!task.nodeId) return true;
+            const typeKey = task.type.includes('video') ? 'video' : task.type.includes('image') ? 'image' : task.type;
+            return !serverNodeKeys.has(task.nodeId + ':' + typeKey);
+          });
         const seen = new Set<string>();
         const merged = [...serverTasks, ...localQueueTasks]
           .filter(task => {
@@ -153,8 +213,13 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
           })
           .sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime());
 
-        setTasks(merged);
-        setLoadError(serverRes && !serverRes.success ? '后端任务读取失败，已显示本地任务缓存' : null);
+        setTasks(prev => {
+          if (!serverRes?.success && localQueueTasks.length === 0 && merged.length === 0) {
+            return prev;
+          }
+          return merged;
+        });
+        setLoadError(serverRes.success ? null : `任务读取暂时不稳定：${serverRes.error || '未知错误'}${serverRes.detail ? `｜${serverRes.detail}` : ''}`);
       } catch (err: any) {
         setLoadError(err?.message || '任务队列读取失败');
       }
@@ -183,6 +248,25 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
     setPage(current => Math.min(current, Math.max(1, Math.ceil(tasks.length / PAGE_SIZE))));
   }, [tasks.length]);
 
+  const clearTasks = async () => {
+    if (isClearing) return;
+    if (tasks.length > 0 && !confirm('确定清空当前项目的任务队列吗？这只会清理任务记录，不会删除画布节点和素材。')) return;
+
+    setIsClearing(true);
+    try {
+      await fetch(`/api/workspace-projects/${encodeURIComponent(projectId)}/tasks`, { method: 'DELETE' }).catch(() => null);
+      await taskQueueManager.clearTasks(projectId);
+      if (projectId !== 'local-project') {
+        await taskQueueManager.clearTasks('local-project');
+      }
+      setTasks([]);
+      setLoadError(null);
+      setPage(1);
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
   return (
     <div
       className="absolute right-5 top-20 bottom-5 w-[520px] bg-[#111214]/95 backdrop-blur-2xl border border-zinc-800/90 shadow-[0_24px_80px_rgba(0,0,0,0.65)] z-[250] flex flex-col rounded-3xl overflow-hidden animate-in slide-in-from-right duration-300"
@@ -202,9 +286,20 @@ export function TaskQueuePanel({ projectId, onClose }: TaskQueuePanelProps) {
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={clearTasks}
+              disabled={isClearing}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-zinc-800 bg-black/20 text-xs text-zinc-400 hover:text-rose-200 hover:border-rose-400/30 hover:bg-rose-500/10 disabled:opacity-40 transition-colors"
+              title="清空任务队列"
+            >
+              <Trash2 size={14} />
+              清空
+            </button>
+            <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-colors">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="relative grid grid-cols-4 gap-2 mt-5">

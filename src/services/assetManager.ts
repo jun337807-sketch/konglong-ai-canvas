@@ -14,6 +14,22 @@ const STORAGE_KEY_PREFIX = 'canvas_assets_';
 class AssetManager {
   async getAssets(projectId: string): Promise<Asset[]> {
     try {
+      const res = await fetch(`/api/workspace-projects/${encodeURIComponent(projectId)}/assets`);
+      if (!res.ok) throw new Error(`assets request failed: ${res.status}`);
+      const data = await res.json();
+      return (data.assets || []).map((asset: any) => ({
+        id: asset.id,
+        projectId: asset.workspace_project_id || projectId,
+        type: asset.type,
+        url: asset.url,
+        name: asset.name,
+        createdAt: asset.created_at,
+        metadata: asset.metadata || {}
+      }));
+    } catch (e) {
+      console.warn('Use local assets fallback:', e);
+    }
+    try {
       const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}${projectId}`);
       if (stored) {
         return JSON.parse(stored);
@@ -35,6 +51,35 @@ class AssetManager {
   }
 
   async registerAsset(projectId: string, asset: Omit<Asset, 'id' | 'createdAt' | 'projectId'>): Promise<Asset> {
+    try {
+      const res = await fetch(`/api/workspace-projects/${encodeURIComponent(projectId)}/assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: asset.type,
+          name: asset.name,
+          tosKey: asset.metadata?.tosKey || asset.url,
+          url: asset.url,
+          thumbnailUrl: asset.metadata?.thumbnailUrl,
+          metadata: asset.metadata || {},
+          createdBy: asset.metadata?.createdBy || localStorage.getItem('dino_currentUser') || 'system'
+        })
+      });
+      if (!res.ok) throw new Error(`register asset failed: ${res.status}`);
+      const data = await res.json();
+      const saved = data.asset;
+      return {
+        id: saved.id,
+        projectId: saved.workspace_project_id || projectId,
+        type: saved.type,
+        url: saved.url,
+        name: saved.name,
+        createdAt: saved.created_at,
+        metadata: saved.metadata || {}
+      };
+    } catch (e) {
+      console.warn('Register local asset fallback:', e);
+    }
     const assets = await this.getAssets(projectId);
     const newAsset: Asset = {
       ...asset,

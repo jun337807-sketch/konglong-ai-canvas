@@ -6,6 +6,8 @@ export interface MediaHistoryItem {
 }
 
 const STORAGE_KEY = 'dino_media_history';
+const MAX_HISTORY_ITEMS = 80;
+const MAX_DATA_URL_LENGTH = 750_000;
 
 export class MediaHistoryService {
   static getHistory(): MediaHistoryItem[] {
@@ -30,13 +32,18 @@ export class MediaHistoryService {
   }
 
   static addHistory(item: Omit<MediaHistoryItem, 'id' | 'createdAt'>) {
+    if (item.url.startsWith('data:') && item.url.length > MAX_DATA_URL_LENGTH) {
+      console.warn('Skip oversized media history item to keep canvas responsive.');
+      return;
+    }
     const history = this.getHistory();
-    history.unshift({
+    const nextItem = {
       ...item,
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString()
-    });
-    this.saveHistory(history);
+    };
+    const deduped = history.filter(h => h.url !== item.url);
+    this.saveHistory([nextItem, ...deduped].slice(0, MAX_HISTORY_ITEMS));
   }
 
   static removeHistory(id: string) {
@@ -47,5 +54,38 @@ export class MediaHistoryService {
 
   private static saveHistory(history: MediaHistoryItem[]) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  }
+
+  static async getProjectHistory(projectId?: string): Promise<MediaHistoryItem[]> {
+    const local = this.getHistory();
+    if (!projectId) return local;
+
+    try {
+      const res = await fetch(`/api/workspace-projects/${encodeURIComponent(projectId)}/assets`);
+      if (!res.ok) throw new Error(`assets request failed: ${res.status}`);
+      const data = await res.json();
+      const serverItems: MediaHistoryItem[] = (data.assets || [])
+        .filter((asset: any) => ['image', 'video', 'audio'].includes(asset.type) && asset.url)
+        .map((asset: any) => ({
+          id: asset.id || asset.asset_id || asset.url,
+          type: asset.type,
+          url: asset.url,
+          createdAt: asset.created_at || new Date().toISOString()
+        }));
+
+      const seen = new Set<string>();
+      return [...serverItems, ...local]
+        .filter(item => {
+          const key = `${item.type}:${item.url}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, MAX_HISTORY_ITEMS);
+    } catch (err) {
+      console.warn('Use local media history fallback:', err);
+      return local;
+    }
   }
 }

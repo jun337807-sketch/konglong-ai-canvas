@@ -3,6 +3,31 @@ import { Node, Edge } from '@xyflow/react';
 import { HistoryManager, HistoryAction } from '../services/historyManager';
 import { CanvasState, exportCanvasState } from '../services/canvasStateManager';
 
+function stripLargeInlineMedia(nodes: Node[]) {
+  return nodes.map((node: any) => {
+    const data = node?.data || {};
+    const imageUrl = typeof data.imageUrl === 'string' && data.imageUrl.startsWith('data:image/') && data.imageUrl.length > 750_000
+      ? ''
+      : data.imageUrl;
+    const videoUrl = typeof data.videoUrl === 'string' && data.videoUrl.startsWith('data:video/') && data.videoUrl.length > 750_000
+      ? ''
+      : data.videoUrl;
+
+    return {
+      ...node,
+      data: {
+        ...data,
+        imageUrl,
+        videoUrl
+      }
+    };
+  });
+}
+
+function exportSlimCanvasState(projectId: string, nodes: Node[], edges: Edge[]): CanvasState {
+  return exportCanvasState(projectId, stripLargeInlineMedia(nodes), edges, null);
+}
+
 export function useCanvasHistory(
   projectId: string,
   nodes: Node[],
@@ -16,13 +41,13 @@ export function useCanvasHistory(
   useEffect(() => {
     if (nodes.length > 0 || edges.length > 0) {
       if (!manager.canUndo() && !manager.canRedo()) {
-        manager.initialize(exportCanvasState(projectId, nodes, edges, null));
+        manager.initialize(exportSlimCanvasState(projectId, nodes, edges));
       }
     }
   }, [nodes, edges, manager, projectId]);
 
   const saveHistory = useCallback((actionType: string, targetId?: string, targetType?: string) => {
-    manager.push(actionType, exportCanvasState(projectId, nodes, edges, null), targetId, targetType);
+    manager.push(actionType, exportSlimCanvasState(projectId, nodes, edges), targetId, targetType);
   }, [manager, projectId, nodes, edges]);
 
   const undo = useCallback(() => {

@@ -62,6 +62,10 @@ VIDEO_REFERENCE_INGEST_TO_TOS=true
 IMAGE_PROVIDER=openai-compatible
 IMAGE_API_BASE_URL=https://api.duolapi.cn
 IMAGE_API_KEY=你的图片生成API Key
+IMAGE_PROVIDER_KONGLONG_IMAGE=openai-compatible
+IMAGE_PROVIDER_KONGLONG_BANANA_2=openai-compatible
+IMAGE_PROVIDER_KONGLONG_BANANA_PRO=openai-compatible
+IMAGE_PROVIDER_KONGLONG_MJ=openai-compatible
 IMAGE_API_KEY_KONGLONG_IMAGE=可选：挂载 gpt-image 分组的令牌
 IMAGE_API_KEY_KONGLONG_BANANA_2=可选：挂载 Banana/Gemini 分组的令牌
 IMAGE_API_KEY_KONGLONG_BANANA_2_2K=可选：挂载 Banana/Gemini 2K 分组的令牌
@@ -74,6 +78,8 @@ IMAGE_RESPONSE_FORMAT=b64_json
 IMAGE_MAX_EDGE_PIXELS=3840
 IMAGE_MODEL=gpt-image-2
 IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
+IMAGE_MODEL_KONGLONG_IMAGE_2K=gpt-image-2-vip
+IMAGE_MODEL_KONGLONG_IMAGE_4K=gpt-image-2-vip
 IMAGE_MODEL_KONGLONG_BANANA_2=gemini-3.1-flash-image-preview
 IMAGE_MODEL_KONGLONG_BANANA_2_2K=gemini-3.1-flash-image-preview-2k
 IMAGE_MODEL_KONGLONG_BANANA_2_4K=gemini-3.1-flash-image-preview-4k
@@ -86,7 +92,7 @@ IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch
 ```
 
 前端模型映射：
-- `KONGLONG Image` → `IMAGE_MODEL_KONGLONG_IMAGE`
+- `KONGLONG Image` → `1K` 使用 `IMAGE_MODEL_KONGLONG_IMAGE`，`2K / 4K` 优先使用 `IMAGE_MODEL_KONGLONG_IMAGE_2K / IMAGE_MODEL_KONGLONG_IMAGE_4K`
 - `KONGLONG Banana 2` → 按清晰度自动选择 `IMAGE_MODEL_KONGLONG_BANANA_2 / IMAGE_MODEL_KONGLONG_BANANA_2_2K / IMAGE_MODEL_KONGLONG_BANANA_2_4K`
 - `KONGLONG Banana pro` → `IMAGE_MODEL_KONGLONG_BANANA_PRO`
 - `KONGLONG MJ` → `IMAGE_MODEL_KONGLONG_MJ`；默认作为 duolapi 图片分组模型走 `/v1/images/generations`
@@ -105,6 +111,53 @@ IMAGE_API_KEY_KONGLONG_MJ=挂载 MJ 分组的令牌
 ```
 
 `IMAGE_MJ_PROTOCOL=openai-compatible` 表示 `KONGLONG MJ` 也是 duolapi 图片分组里的普通模型，走 `/v1/images/generations`；只有未来接入独立 MJ Proxy 时，才改成 `IMAGE_MJ_PROTOCOL=mj-proxy`。
+
+### 接入 Grsai nano-banana
+
+如果要让 Banana 系列走 Grsai 新接口，不需要改前端 UI，只改服务器 `.env`：
+
+```bash
+IMAGE_PROVIDER_KONGLONG_BANANA_2=grsai
+IMAGE_PROVIDER_KONGLONG_BANANA_PRO=grsai
+IMAGE_GRSAI_API_BASE_URL=https://grsaiapi.com
+IMAGE_GRSAI_SUBMIT_PATH=/v1/api/generate
+IMAGE_GRSAI_RESULT_PATH=/v1/api/result
+IMAGE_GRSAI_REPLY_TYPE=json
+IMAGE_GRSAI_POLL_INTERVAL_MS=3000
+IMAGE_GRSAI_POLL_TIMEOUT_MS=360000
+IMAGE_API_KEY_GRSAI=你的 Grsai API Key
+
+IMAGE_MODEL_KONGLONG_BANANA_2=nano-banana-2
+IMAGE_MODEL_KONGLONG_BANANA_2_2K=nano-banana-2
+IMAGE_MODEL_KONGLONG_BANANA_2_4K=nano-banana-2-4k-cl
+IMAGE_MODEL_KONGLONG_BANANA_PRO=nano-banana-pro
+```
+
+如果要让 `KONGLONG Image` 也走 Grsai：
+
+```bash
+IMAGE_PROVIDER_KONGLONG_IMAGE=grsai
+IMAGE_API_KEY_GRSAI=你的 Grsai API Key
+IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2
+IMAGE_MODEL_KONGLONG_IMAGE_2K=gpt-image-2-vip
+IMAGE_MODEL_KONGLONG_IMAGE_4K=gpt-image-2-vip
+```
+
+普通 `gpt-image-2` 在 Grsai 文档中只支持 1K 档；当前端选择 `2K / 4K` 时，后端会自动改用 `IMAGE_MODEL_KONGLONG_IMAGE_2K / IMAGE_MODEL_KONGLONG_IMAGE_4K`，默认是 `gpt-image-2-vip`。
+
+如果希望 `KONGLONG Image` 的所有清晰度都使用 Grsai 的 VIP 图像模型：
+
+```bash
+IMAGE_MODEL_KONGLONG_IMAGE=gpt-image-2-vip
+```
+
+此时前端的 `1K / 2K / 4K` 会被后端转换为 Grsai 文档里的合法像素值，例如 `16:9 · 4K` 会发送 `3840x2160`。
+
+国内节点可把 `IMAGE_GRSAI_API_BASE_URL` 改为：
+
+```bash
+IMAGE_GRSAI_API_BASE_URL=https://grsai.dakka.com.cn
+```
 
 ## 视频生成 API
 
@@ -155,6 +208,10 @@ VIDEO_REFERENCE_INGEST_TO_TOS=true
 IMAGE_PROVIDER=openai-compatible
 IMAGE_API_BASE_URL=https://api.duolapi.cn
 IMAGE_API_KEY=你的图片生成API Key
+IMAGE_PROVIDER_KONGLONG_IMAGE=openai-compatible
+IMAGE_PROVIDER_KONGLONG_BANANA_2=openai-compatible
+IMAGE_PROVIDER_KONGLONG_BANANA_PRO=openai-compatible
+IMAGE_PROVIDER_KONGLONG_MJ=openai-compatible
 IMAGE_API_KEY_KONGLONG_IMAGE=
 IMAGE_API_KEY_KONGLONG_BANANA_2=
 IMAGE_API_KEY_KONGLONG_BANANA_2_2K=
@@ -176,6 +233,14 @@ IMAGE_MJ_PROTOCOL=openai-compatible
 IMAGE_MJ_API_BASE_URL=https://api.duolapi.cn
 IMAGE_MJ_SUBMIT_PATH=/mj/submit/imagine
 IMAGE_MJ_TASK_PATH_TEMPLATE=/mj/task/{taskId}/fetch
+
+IMAGE_GRSAI_API_BASE_URL=https://grsaiapi.com
+IMAGE_GRSAI_SUBMIT_PATH=/v1/api/generate
+IMAGE_GRSAI_RESULT_PATH=/v1/api/result
+IMAGE_GRSAI_REPLY_TYPE=json
+IMAGE_GRSAI_POLL_INTERVAL_MS=3000
+IMAGE_GRSAI_POLL_TIMEOUT_MS=360000
+IMAGE_API_KEY_GRSAI=
 
 VIDEO_PROVIDER=mjapi-monthly
 VIDEO_API_BASE_URL=https://api.mjapi.cc.cd

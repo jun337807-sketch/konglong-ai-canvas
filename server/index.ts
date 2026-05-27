@@ -12,6 +12,8 @@ import assetRoutes from './routes/assets.js';
 import taskRoutes from './routes/tasks.js';
 import operationLogRoutes from './routes/operationLogs.js';
 import generationRoutes from './routes/generation.js';
+import workspaceExtraRoutes from './routes/workspaceExtras.js';
+import statisticsRoutes from './routes/statistics.js';
 
 async function startServer() {
   const app = express();
@@ -32,6 +34,8 @@ async function startServer() {
   app.use('/api', taskRoutes);
   app.use('/api', operationLogRoutes);
   app.use('/api', generationRoutes);
+  app.use('/api', workspaceExtraRoutes);
+  app.use('/api', statisticsRoutes);
 
   // Health check
   app.get("/api/health", (req, res) => {

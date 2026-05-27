@@ -9,10 +9,30 @@ const db = {
 
 class BeatService {
   async getBeatsByEpisode(episodeId: string): Promise<Beat[]> {
-    return Promise.resolve(db.getBeats().filter(b => b.episode_id === episodeId));
+    try {
+      const res = await fetch(`/api/episodes/${encodeURIComponent(episodeId)}/beats`);
+      if (!res.ok) throw new Error(`beats request failed: ${res.status}`);
+      const data = await res.json();
+      return data.beats || [];
+    } catch (err) {
+      console.warn('Use local beats fallback:', err);
+      return Promise.resolve(db.getBeats().filter(b => b.episode_id === episodeId));
+    }
   }
 
   async createBeat(beatData: Partial<Beat> & { episode_id: string }): Promise<Beat> {
+    try {
+      const res = await fetch(`/api/episodes/${encodeURIComponent(beatData.episode_id)}/beats`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(beatData)
+      });
+      if (!res.ok) throw new Error(`create beat failed: ${res.status}`);
+      const data = await res.json();
+      return data.beat;
+    } catch (err) {
+      console.warn('Create local beat fallback:', err);
+    }
     const beats = db.getBeats();
     const newBeat: Beat = {
       beat_id: `beat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -34,6 +54,18 @@ class BeatService {
   }
 
   async updateBeat(beatId: string, updates: Partial<Beat>): Promise<Beat | null> {
+    try {
+      const res = await fetch(`/api/beats/${encodeURIComponent(beatId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (!res.ok) throw new Error(`update beat failed: ${res.status}`);
+      const data = await res.json();
+      return data.beat;
+    } catch (err) {
+      console.warn('Update local beat fallback:', err);
+    }
     const beats = db.getBeats();
     const idx = beats.findIndex(b => b.beat_id === beatId);
     if (idx === -1) return Promise.resolve(null);
@@ -43,6 +75,14 @@ class BeatService {
   }
 
   async deleteBeat(beatId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/beats/${encodeURIComponent(beatId)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`delete beat failed: ${res.status}`);
+      const data = await res.json();
+      return Boolean(data.deleted);
+    } catch (err) {
+      console.warn('Delete local beat fallback:', err);
+    }
     const beats = db.getBeats();
     const len = beats.length;
     const filtered = beats.filter(b => b.beat_id !== beatId);

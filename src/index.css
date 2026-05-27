@@ -15,6 +15,33 @@
   background-color: rgba(255, 255, 255, 0.3);
 }
 
+
+.script-panel-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 229, 255, 0.42) rgba(18, 20, 24, 0.55);
+}
+.script-panel-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.script-panel-scrollbar::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(24,24,27,0.12), rgba(24,24,27,0.72));
+  border-radius: 999px;
+  border: 3px solid rgba(17,18,20,0.95);
+}
+.script-panel-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(0,229,255,0.78), rgba(99,102,241,0.58));
+  border: 3px solid rgba(17,18,20,0.95);
+  border-radius: 999px;
+  box-shadow: 0 0 12px rgba(0,188,212,0.35);
+}
+.script-panel-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(103,232,249,0.95), rgba(129,140,248,0.82));
+}
+.script-panel-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 @keyframes flowAnimation {
   from {
     stroke-dashoffset: 100;
